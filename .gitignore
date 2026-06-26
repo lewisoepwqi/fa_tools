@@ -1,0 +1,14 @@
+.env
+.local/
+.pytest_cache/
+__pycache__/
+*.pyc
+.coverage
+.ruff_cache/
+htmlcov/
+backend/.coverage
+backend/.venv/
+backend/htmlcov/
+backend/*.egg-info/
+frontend/node_modules/
+frontend/dist/
