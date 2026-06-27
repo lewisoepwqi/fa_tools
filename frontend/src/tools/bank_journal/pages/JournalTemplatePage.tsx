@@ -1,11 +1,18 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Form, Input, Modal, Select, Table, Typography, message } from 'antd';
+import { Button, Input, Modal, Select, Table, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createJournalTemplate, listJournalTemplates } from '../api/journalTemplates';
+import {
+  JournalColumnsEditor,
+  columnsFromBackend,
+  columnsToBackend,
+  type JournalColumn
+} from '../components/JournalColumnsEditor';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
+import { FILE_TYPE_OPTIONS } from '../constants';
 import type { JournalTemplate } from '../types/templates';
 
 const ACTOR = 'user-1';
@@ -15,8 +22,14 @@ export function JournalTemplatePage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [form] = Form.useForm();
   const navigate = useNavigate();
+
+  const [name, setName] = useState('');
+  const [fileType, setFileType] = useState('xlsx');
+  const [sheetName, setSheetName] = useState('日记账');
+  const [columns, setColumns] = useState<JournalColumn[]>(
+    columnsFromBackend(['日期', '摘要', '科目', '金额'], ['日期', '科目', '金额'])
+  );
 
   const load = () => {
     setLoading(true);
@@ -44,23 +57,34 @@ export function JournalTemplatePage() {
     };
   }, []);
 
+  const openCreate = () => {
+    setName('');
+    setFileType('xlsx');
+    setSheetName('日记账');
+    setColumns(columnsFromBackend(['日期', '摘要', '科目', '金额'], ['日期', '科目', '金额']));
+    setModalOpen(true);
+  };
+
   const handleCreate = async () => {
-    const values = await form.validateFields();
+    if (!name.trim()) {
+      message.error('请输入模板名称');
+      return;
+    }
     setCreating(true);
     try {
+      const { columns_json, required_columns_json } = columnsToBackend(columns);
       await createJournalTemplate({
         company_id: 'company-1',
-        name: values.name,
+        name,
         version: {
-          file_type: values.file_type,
-          sheet_name: values.sheet_name,
-          columns_json: values.columns_json,
-          required_columns_json: values.required_columns_json,
+          file_type: fileType,
+          sheet_name: sheetName,
+          columns_json,
+          required_columns_json,
           created_by: ACTOR
         }
       });
       message.success('模板已创建');
-      form.resetFields();
       setModalOpen(false);
       load();
     } catch (err) {
@@ -70,8 +94,16 @@ export function JournalTemplatePage() {
     }
   };
 
-  const columns: ColumnsType<JournalTemplate> = [
+  const columnsDef: ColumnsType<JournalTemplate> = [
     { title: '名称', dataIndex: 'name', key: 'name' },
+    {
+      title: '输出列',
+      key: 'columns',
+      render: (_, r) => {
+        const cols = (r.latest_version.columns_json as string[]) ?? [];
+        return <Typography.Text>{cols.join('、') || '-'}</Typography.Text>;
+      }
+    },
     { title: '状态', dataIndex: 'status', key: 'status', render: (_, r) => <StatusTag status={r.status} /> },
     {
       title: '最新版本',
@@ -86,20 +118,13 @@ export function JournalTemplatePage() {
         <Typography.Title level={3} style={{ margin: 0 }}>
           日记账模板
         </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            form.resetFields();
-            setModalOpen(true);
-          }}
-        >
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
           新建
         </Button>
       </div>
       <Table<JournalTemplate>
         rowKey="id"
-        columns={columns}
+        columns={columnsDef}
         dataSource={rows}
         loading={loading}
         pagination={false}
@@ -118,26 +143,35 @@ export function JournalTemplatePage() {
         onOk={handleCreate}
         onCancel={() => setModalOpen(false)}
         destroyOnClose
+        width={680}
       >
-        <Form
-          form={form}
-          layout="vertical"
-          initialValues={{ file_type: 'xlsx', sheet_name: '日记账', columns_json: ['日期', '摘要', '科目', '金额'], required_columns_json: ['日期', '科目', '金额'] }}
-          style={{ marginTop: 16 }}
-        >
-          <Form.Item name="name" label="模板名称" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="file_type" label="文件类型" rules={[{ required: true }]}>
-            <Select options={[{ value: 'csv', label: 'CSV' }, { value: 'xlsx', label: 'XLSX' }]} />
-          </Form.Item>
-          <Form.Item name="sheet_name" label="Sheet 名">
-            <Input />
-          </Form.Item>
-        </Form>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          输出字段 / 必填字段将使用默认值（日期、摘要、科目、金额）。可在详情页通过新建版本修改。
-        </Typography.Text>
+        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <Typography.Text strong>模板名称</Typography.Text>
+            <Input style={{ marginTop: 4 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="如：标准日记账模板" />
+          </div>
+          <div style={{ display: 'flex', gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <Typography.Text strong>文件类型</Typography.Text>
+              <Select
+                style={{ width: '100%', marginTop: 4 }}
+                value={fileType}
+                onChange={setFileType}
+                options={FILE_TYPE_OPTIONS}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <Typography.Text strong>工作表名</Typography.Text>
+              <Input style={{ marginTop: 4 }} value={sheetName} onChange={(e) => setSheetName(e.target.value)} placeholder="如：日记账" />
+            </div>
+          </div>
+          <div>
+            <Typography.Text strong>输出列配置</Typography.Text>
+            <div style={{ marginTop: 4 }}>
+              <JournalColumnsEditor value={columns} onChange={setColumns} />
+            </div>
+          </div>
+        </div>
       </Modal>
     </div>
   );

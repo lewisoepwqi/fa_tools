@@ -1,11 +1,19 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Form, Input, Modal, Table, Typography, message } from 'antd';
+import { Button, Input, Modal, Select, Table, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { listBankTemplates } from '../api/bankTemplates';
+import { listJournalTemplates } from '../api/journalTemplates';
 import { createMappingProfile, listMappingProfiles } from '../api/mappingProfiles';
+import {
+  MappingEditor,
+  mappingToBackend,
+  type MappingEntry
+} from '../components/MappingEditor';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
+import type { BankTemplate, JournalTemplate } from '../types/templates';
 import type { MappingProfile } from '../types/mapping';
 
 const ACTOR = 'user-1';
@@ -15,8 +23,17 @@ export function MappingProfilePage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [form] = Form.useForm();
   const navigate = useNavigate();
+
+  // 模板下拉选项
+  const [bankTemplates, setBankTemplates] = useState<BankTemplate[]>([]);
+  const [journalTemplates, setJournalTemplates] = useState<JournalTemplate[]>([]);
+  // 表单态
+  const [name, setName] = useState('');
+  const [bankTemplateId, setBankTemplateId] = useState<string | undefined>();
+  const [journalTemplateId, setJournalTemplateId] = useState<string | undefined>();
+  const [journalColumns, setJournalColumns] = useState<string[]>([]);
+  const [mappings, setMappings] = useState<MappingEntry[]>([]);
 
   const load = () => {
     setLoading(true);
@@ -44,26 +61,53 @@ export function MappingProfilePage() {
     };
   }, []);
 
+  // 打开弹窗时加载可选模板
+  const openCreate = async () => {
+    setName('');
+    setBankTemplateId(undefined);
+    setJournalTemplateId(undefined);
+    setJournalColumns([]);
+    setMappings([]);
+    setModalOpen(true);
+    try {
+      const [banks, journals] = await Promise.all([listBankTemplates(), listJournalTemplates()]);
+      setBankTemplates(banks);
+      setJournalTemplates(journals);
+    } catch {
+      // 加载失败不阻塞，允许手动输入列名
+    }
+  };
+
+  // 选择日记账模板时，加载其输出列作为目标列候选
+  const handleSelectJournal = (id: string) => {
+    setJournalTemplateId(id);
+    const tpl = journalTemplates.find((t) => t.id === id);
+    const cols = ((tpl?.latest_version.columns_json as string[]) ?? []).map(String);
+    setJournalColumns(cols);
+  };
+
   const handleCreate = async () => {
-    const values = await form.validateFields();
+    if (!name.trim()) {
+      message.error('请输入方案名称');
+      return;
+    }
     setCreating(true);
     try {
       await createMappingProfile({
         company_id: 'company-1',
-        name: values.name,
-        bank_template_id: values.bank_template_id || null,
-        company_journal_template_id: values.company_journal_template_id || null,
+        name,
+        bank_template_id: bankTemplateId ?? null,
+        company_journal_template_id: journalTemplateId ?? null,
         version: {
-          mappings_json: values.mappings_json ? JSON.parse(values.mappings_json) : {},
+          mappings_json: mappingToBackend(mappings),
           created_by: ACTOR
         }
       });
       message.success('映射方案已创建');
-      form.resetFields();
       setModalOpen(false);
       load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '创建失败（检查 JSON 格式）');
+      message.error(err instanceof Error ? err.message : '创建失败');
     } finally {
       setCreating(false);
     }
@@ -73,15 +117,13 @@ export function MappingProfilePage() {
     { title: '名称', dataIndex: 'name', key: 'name' },
     {
       title: '银行流水模板',
-      dataIndex: 'bank_template_id',
-      key: 'bank_template_id',
-      render: (v) => v ?? '-'
+      key: 'bank_template',
+      render: (_, r) => bankTemplates.find((t) => t.id === r.bank_template_id)?.name ?? '-'
     },
     {
       title: '日记账模板',
-      dataIndex: 'company_journal_template_id',
-      key: 'company_journal_template_id',
-      render: (v) => v ?? '-'
+      key: 'journal_template',
+      render: (_, r) => journalTemplates.find((t) => t.id === r.company_journal_template_id)?.name ?? '-'
     },
     { title: '状态', dataIndex: 'status', key: 'status', render: (_, r) => <StatusTag status={r.status} /> },
     {
@@ -97,14 +139,7 @@ export function MappingProfilePage() {
         <Typography.Title level={3} style={{ margin: 0 }}>
           映射方案
         </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            form.resetFields();
-            setModalOpen(true);
-          }}
-        >
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
           新建
         </Button>
       </div>
@@ -129,25 +164,48 @@ export function MappingProfilePage() {
         onOk={handleCreate}
         onCancel={() => setModalOpen(false)}
         destroyOnClose
+        width={680}
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="name" label="方案名称" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="bank_template_id" label="银行模板 ID（可选）">
-            <Input placeholder="留空则不绑定" />
-          </Form.Item>
-          <Form.Item name="company_journal_template_id" label="日记账模板 ID（可选）">
-            <Input placeholder="留空则不绑定" />
-          </Form.Item>
-          <Form.Item
-            name="mappings_json"
-            label="映射配置（JSON）"
-            extra='例如：{"日期": "transaction_date", "摘要": "summary"}'
-          >
-            <Input.TextArea rows={3} placeholder='{"日期": "transaction_date"}' />
-          </Form.Item>
-        </Form>
+        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <Typography.Text strong>方案名称</Typography.Text>
+            <Input
+              style={{ marginTop: 4 }}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="如：中行流水 → 标准日记账"
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <Typography.Text strong>银行流水模板</Typography.Text>
+              <Select
+                style={{ width: '100%', marginTop: 4 }}
+                placeholder="选择银行模板（可选）"
+                allowClear
+                value={bankTemplateId}
+                onChange={setBankTemplateId}
+                options={bankTemplates.map((t) => ({ value: t.id, label: t.name }))}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <Typography.Text strong>日记账模板</Typography.Text>
+              <Select
+                style={{ width: '100%', marginTop: 4 }}
+                placeholder="选择日记账模板（可选）"
+                allowClear
+                value={journalTemplateId}
+                onChange={handleSelectJournal}
+                options={journalTemplates.map((t) => ({ value: t.id, label: t.name }))}
+              />
+            </div>
+          </div>
+          <MappingEditor
+            value={mappings}
+            onChange={setMappings}
+            targetOptions={journalColumns.length > 0 ? journalColumns : undefined}
+          />
+        </div>
       </Modal>
     </div>
   );

@@ -1,21 +1,31 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Form, Input, InputNumber, Modal, Switch, Table, Tag, Typography, message } from 'antd';
+import { Button, Input, InputNumber, Modal, Switch, Table, Tag, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createRule, listRules } from '../api/rules';
+import {
+  RuleEditor,
+  ruleDataToBackend,
+  type RuleEditorData
+} from '../components/RuleEditor';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { Rule } from '../types/rules';
 
 const ACTOR = 'user-1';
 
+const EMPTY_RULE: RuleEditorData = { logic: 'all', conditions: [], actions: [] };
+
 export function RulePage() {
   const [rows, setRows] = useState<Rule[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [form] = Form.useForm();
+  const [name, setName] = useState('');
+  const [priority, setPriority] = useState(10);
+  const [allowAutoConfirm, setAllowAutoConfirm] = useState(false);
+  const [ruleData, setRuleData] = useState<RuleEditorData>(EMPTY_RULE);
   const navigate = useNavigate();
 
   const load = () => {
@@ -44,27 +54,42 @@ export function RulePage() {
     };
   }, []);
 
+  const openCreate = () => {
+    setName('');
+    setPriority(10);
+    setAllowAutoConfirm(false);
+    setRuleData(EMPTY_RULE);
+    setModalOpen(true);
+  };
+
   const handleCreate = async () => {
-    const values = await form.validateFields();
+    if (!name.trim()) {
+      message.error('请输入规则名称');
+      return;
+    }
+    if (ruleData.conditions.length === 0) {
+      message.error('请至少添加一个条件');
+      return;
+    }
     setCreating(true);
     try {
+      const { conditions_json, actions_json } = ruleDataToBackend(ruleData);
       await createRule({
         company_id: 'company-1',
-        name: values.name,
+        name,
         version: {
-          priority: values.priority,
-          conditions_json: values.conditions_json ? JSON.parse(values.conditions_json) : {},
-          actions_json: values.actions_json ? JSON.parse(values.actions_json) : {},
-          allow_auto_confirm: values.allow_auto_confirm ?? false,
+          priority,
+          conditions_json,
+          actions_json,
+          allow_auto_confirm: allowAutoConfirm,
           created_by: ACTOR
         }
       });
       message.success('规则已创建');
-      form.resetFields();
       setModalOpen(false);
       load();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '创建失败（检查 JSON 格式）');
+      message.error(err instanceof Error ? err.message : '创建失败');
     } finally {
       setCreating(false);
     }
@@ -106,14 +131,7 @@ export function RulePage() {
         <Typography.Title level={3} style={{ margin: 0 }}>
           规则
         </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            form.resetFields();
-            setModalOpen(true);
-          }}
-        >
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
           新建
         </Button>
       </div>
@@ -138,33 +156,25 @@ export function RulePage() {
         onOk={handleCreate}
         onCancel={() => setModalOpen(false)}
         destroyOnClose
-        width={560}
+        width={680}
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }} initialValues={{ priority: 10, allow_auto_confirm: false }}>
-          <Form.Item name="name" label="规则名称" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="priority" label="优先级（数值越小越先执行）">
-            <InputNumber min={0} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="conditions_json"
-            label="条件（JSON）"
-            extra='例：{"all": [{"field": "summary", "op": "contains", "value": "货款"}]}'
-          >
-            <Input.TextArea rows={2} placeholder='{"all": [{"field": "summary", "op": "contains", "value": "货款"}]}' />
-          </Form.Item>
-          <Form.Item
-            name="actions_json"
-            label="动作（JSON）"
-            extra='例：{"set": {"account_subject": "银行存款"}}'
-          >
-            <Input.TextArea rows={2} placeholder='{"set": {"account_subject": "银行存款"}}' />
-          </Form.Item>
-          <Form.Item name="allow_auto_confirm" label="允许自动确认" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-        </Form>
+        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <Typography.Text strong>规则名称</Typography.Text>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：货款自动入账" style={{ marginTop: 4 }} />
+            </div>
+            <div style={{ width: 140 }}>
+              <Typography.Text strong>优先级（越小越先）</Typography.Text>
+              <InputNumber min={0} value={priority} onChange={(v) => setPriority(v ?? 0)} style={{ width: '100%', marginTop: 4 }} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Switch checked={allowAutoConfirm} onChange={setAllowAutoConfirm} />
+            <Typography.Text>命中后允许自动确认（否则进入人工确认）</Typography.Text>
+          </div>
+          <RuleEditor value={ruleData} onChange={setRuleData} />
+        </div>
       </Modal>
     </div>
   );

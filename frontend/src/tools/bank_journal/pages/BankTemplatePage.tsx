@@ -1,27 +1,22 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Form, Input, InputNumber, Modal, Select, Space, Table, Typography, message } from 'antd';
+import { Button, Modal, Table, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createBankTemplate, listBankTemplates } from '../api/bankTemplates';
+import { BankTemplateWizard } from '../components/BankTemplateWizard';
+import type { BankTemplateWizardValues } from '../components/BankTemplateWizard';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { BankTemplate } from '../types/templates';
 
 const ACTOR = 'user-1';
-const AMOUNT_MODES = [
-  { value: 'income_expense_columns', label: '收入/支出双列' },
-  { value: 'debit_credit_columns', label: '借方/贷方双列' },
-  { value: 'single_amount_with_direction', label: '单金额+方向列' },
-  { value: 'signed_amount', label: '带符号金额' }
-];
 
 export function BankTemplatePage() {
   const [rows, setRows] = useState<BankTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [form] = Form.useForm();
+  const [wizardOpen, setWizardOpen] = useState(false);
   const navigate = useNavigate();
 
   const load = () => {
@@ -50,30 +45,33 @@ export function BankTemplatePage() {
     };
   }, []);
 
-  const handleCreate = async () => {
-    const values = await form.validateFields();
+  const handleSubmit = async (values: BankTemplateWizardValues) => {
     setCreating(true);
     try {
       await createBankTemplate({
         company_id: 'company-1',
         name: values.name,
-        bank_name: values.bank_name,
+        bank_name: values.bank_name ?? null,
         version: {
-          file_type: values.file_type,
-          header_row_index: values.header_row_index,
-          data_start_row_index: values.data_start_row_index,
-          amount_mode: values.amount_mode,
+          file_type: values.detect.file_type,
+          sheet_selector_json: values.detect.sheet_name ? { sheet_name: values.detect.sheet_name } : null,
+          header_row_index: values.detect.header_row_index,
+          data_start_row_index: values.detect.data_start_row_index,
+          field_aliases_json: values.detect.field_aliases,
+          amount_mode: values.detect.amount_mode,
+          amount_config_json: values.detect.amount_config,
+          date_formats_json: values.detect.date_formats,
+          sample_file_id: values.sample_file_id ?? null,
           created_by: ACTOR
         }
       });
       message.success('模板已创建');
-      form.resetFields();
-      setCreating(false);
-      setModalOpen(false);
+      setWizardOpen(false);
       load();
     } catch (err) {
-      setCreating(false);
       message.error(err instanceof Error ? err.message : '创建失败');
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -105,14 +103,7 @@ export function BankTemplatePage() {
         <Typography.Title level={3} style={{ margin: 0 }}>
           银行流水模板
         </Typography.Title>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            form.resetFields();
-            setModalOpen(true);
-          }}
-        >
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setWizardOpen(true)}>
           新建
         </Button>
       </div>
@@ -129,37 +120,20 @@ export function BankTemplatePage() {
       />
 
       <Modal
-        open={modalOpen}
-        title="新建银行模板"
-        okText="创建"
-        cancelText="取消"
-        confirmLoading={creating}
-        onOk={handleCreate}
-        onCancel={() => setModalOpen(false)}
+        open={wizardOpen}
+        title="新建银行流水模板"
+        footer={null}
+        onCancel={() => setWizardOpen(false)}
         destroyOnClose
+        width={680}
       >
-        <Space direction="vertical" style={{ width: '100%', marginTop: 16 }}>
-          <Form form={form} layout="vertical" initialValues={{ file_type: 'csv', amount_mode: 'income_expense_columns', header_row_index: 0, data_start_row_index: 1 }}>
-            <Form.Item name="name" label="模板名称" rules={[{ required: true }]}>
-              <Input />
-            </Form.Item>
-            <Form.Item name="bank_name" label="银行名称">
-              <Input />
-            </Form.Item>
-            <Form.Item name="file_type" label="文件类型" rules={[{ required: true }]}>
-              <Select options={[{ value: 'csv', label: 'CSV' }, { value: 'xlsx', label: 'XLSX' }]} />
-            </Form.Item>
-            <Form.Item name="amount_mode" label="金额模式" rules={[{ required: true }]}>
-              <Select options={AMOUNT_MODES} />
-            </Form.Item>
-            <Form.Item name="header_row_index" label="表头行（0 基）">
-              <InputNumber min={0} style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item name="data_start_row_index" label="数据起始行（0 基）">
-              <InputNumber min={0} style={{ width: '100%' }} />
-            </Form.Item>
-          </Form>
-        </Space>
+        <div style={{ marginTop: 16 }}>
+          <BankTemplateWizard
+            onSubmit={handleSubmit}
+            onCancel={() => setWizardOpen(false)}
+            submitting={creating}
+          />
+        </div>
       </Modal>
     </div>
   );

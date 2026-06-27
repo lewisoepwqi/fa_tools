@@ -1,10 +1,9 @@
 import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
 import {
+  Alert,
   Button,
   Card,
   Descriptions,
-  Form,
-  Input,
   Modal,
   Space,
   Spin,
@@ -15,23 +14,27 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { listBankTemplates } from '../api/bankTemplates';
+import { listJournalTemplates } from '../api/journalTemplates';
 import {
   createMappingProfileVersion,
   getMappingProfile,
   listMappingProfileVersions,
   setMappingProfileStatus
 } from '../api/mappingProfiles';
+import {
+  MappingEditor,
+  describeMappings,
+  mappingFromBackend,
+  mappingToBackend,
+  type MappingEntry
+} from '../components/MappingEditor';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
+import type { BankTemplate, JournalTemplate } from '../types/templates';
 import type { MappingProfile, MappingProfileVersion } from '../types/mapping';
 
 const ACTOR = 'user-1';
-
-function pretty(value: unknown): string {
-  if (value === null || value === undefined) return '-';
-  if (typeof value === 'object') return JSON.stringify(value, null, 2);
-  return String(value);
-}
 
 export function MappingProfileDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -42,7 +45,10 @@ export function MappingProfileDetailPage() {
   const [editing, setEditing] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [form] = Form.useForm();
+
+  const [bankTemplates, setBankTemplates] = useState<BankTemplate[]>([]);
+  const [journalTemplates, setJournalTemplates] = useState<JournalTemplate[]>([]);
+  const [editMappings, setEditMappings] = useState<MappingEntry[]>([]);
 
   const load = (profileId: string) => {
     setLoading(true);
@@ -61,22 +67,35 @@ export function MappingProfileDetailPage() {
   useEffect(() => {
     if (!id) return;
     load(id);
+    // 顺带加载模板名（用于展示绑定关系）
+    Promise.all([listBankTemplates(), listJournalTemplates()])
+      .then(([b, j]) => {
+        setBankTemplates(b);
+        setJournalTemplates(j);
+      })
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  const openEdit = () => {
+    if (!data) return;
+    setEditMappings(mappingFromBackend(data.latest_version.mappings_json));
+    setEditOpen(true);
+  };
+
   const handleEdit = async () => {
-    if (!id || !data) return;
-    const values = await form.validateFields();
+    if (!id) return;
     setEditing(true);
     try {
-      const patch: Partial<MappingProfileVersion> = { created_by: ACTOR };
-      if (values.mappings_json) patch.mappings_json = JSON.parse(values.mappings_json);
-      await createMappingProfileVersion(id, patch);
+      await createMappingProfileVersion(id, {
+        mappings_json: mappingToBackend(editMappings),
+        created_by: ACTOR
+      });
       message.success('已创建新版本');
       setEditOpen(false);
       load(id);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '创建失败（检查 JSON）');
+      message.error(err instanceof Error ? err.message : '创建失败');
     } finally {
       setEditing(false);
     }
@@ -92,16 +111,6 @@ export function MappingProfileDetailPage() {
     } catch (err) {
       message.error(err instanceof Error ? err.message : '操作失败');
     }
-  };
-
-  const openEdit = () => {
-    if (!data) return;
-    form.setFieldsValue({
-      mappings_json: data.latest_version.mappings_json
-        ? JSON.stringify(data.latest_version.mappings_json)
-        : ''
-    });
-    setEditOpen(true);
   };
 
   if (loading) {
@@ -125,6 +134,8 @@ export function MappingProfileDetailPage() {
   }
 
   const v = data.latest_version;
+  const currentEntries = mappingFromBackend(v.mappings_json);
+
   const versionColumns: ColumnsType<MappingProfileVersion> = [
     {
       title: '版本',
@@ -132,12 +143,12 @@ export function MappingProfileDetailPage() {
       render: (_, r) => <VersionBadge version={r.version_no} />
     },
     {
-      title: '映射配置',
-      key: 'mappings_json',
+      title: '映射',
+      key: 'mappings',
       render: (_, r) => (
-        <pre style={{ margin: 0, maxHeight: 60, overflow: 'auto' }}>
-          {pretty(r.mappings_json)}
-        </pre>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {describeMappings(mappingFromBackend(r.mappings_json))}
+        </Typography.Text>
       )
     }
   ];
@@ -163,8 +174,12 @@ export function MappingProfileDetailPage() {
         <Descriptions size="small" column={2} bordered>
           <Descriptions.Item label="方案ID">{data.id}</Descriptions.Item>
           <Descriptions.Item label="公司">{data.company_id}</Descriptions.Item>
-          <Descriptions.Item label="银行流水模板">{data.bank_template_id ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="日记账模板">{data.company_journal_template_id ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label="银行流水模板">
+            {bankTemplates.find((t) => t.id === data.bank_template_id)?.name ?? '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label="日记账模板">
+            {journalTemplates.find((t) => t.id === data.company_journal_template_id)?.name ?? '-'}
+          </Descriptions.Item>
           <Descriptions.Item label="状态">
             <StatusTag status={data.status} />
           </Descriptions.Item>
@@ -173,38 +188,29 @@ export function MappingProfileDetailPage() {
           </Descriptions.Item>
         </Descriptions>
       </Card>
-      <Card className="work-card" title={`版本配置 · v${v.version_no}`}>
-        <Descriptions size="small" column={1} bordered>
-          <Descriptions.Item label="银行模板版本ID">{v.bank_template_version_id ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="日记账模板版本ID">
-            {v.company_journal_template_version_id ?? '-'}
-          </Descriptions.Item>
-          <Descriptions.Item label="映射配置">
-            <pre style={{ margin: 0 }}>{pretty(v.mappings_json)}</pre>
-          </Descriptions.Item>
-        </Descriptions>
+      <Card className="work-card" title={`配置详情 · v${v.version_no}`}>
+        <Alert
+          type="info"
+          showIcon
+          message="映射关系"
+          description={describeMappings(currentEntries)}
+        />
       </Card>
 
       <Modal
         open={editOpen}
-        title="编辑（创建新版本）"
+        title="编辑映射方案（创建新版本）"
         okText="创建新版本"
         cancelText="取消"
         confirmLoading={editing}
         onOk={handleEdit}
         onCancel={() => setEditOpen(false)}
         destroyOnClose
-        width={520}
+        width={680}
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item
-            name="mappings_json"
-            label="映射配置（JSON）"
-            extra='例：{"日期": "transaction_date", "摘要": "summary"}'
-          >
-            <Input.TextArea rows={4} />
-          </Form.Item>
-        </Form>
+        <div style={{ marginTop: 16 }}>
+          <MappingEditor value={editMappings} onChange={setEditMappings} />
+        </div>
       </Modal>
 
       <Modal

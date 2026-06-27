@@ -3,13 +3,13 @@ import {
   Button,
   Card,
   Descriptions,
-  Form,
   Input,
   Modal,
   Select,
   Space,
   Spin,
   Table,
+  Tag,
   Typography,
   message
 } from 'antd';
@@ -22,17 +22,18 @@ import {
   listJournalTemplateVersions,
   setJournalTemplateStatus
 } from '../api/journalTemplates';
+import {
+  JournalColumnsEditor,
+  columnsFromBackend,
+  columnsToBackend,
+  type JournalColumn
+} from '../components/JournalColumnsEditor';
+import { FILE_TYPE_LABEL, FILE_TYPE_OPTIONS } from '../constants';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { JournalTemplate, JournalTemplateVersion } from '../types/templates';
 
 const ACTOR = 'user-1';
-
-function pretty(value: unknown): string {
-  if (value === null || value === undefined) return '-';
-  if (typeof value === 'object') return JSON.stringify(value, null, 2);
-  return String(value);
-}
 
 export function JournalTemplateDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -43,7 +44,11 @@ export function JournalTemplateDetailPage() {
   const [editing, setEditing] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [form] = Form.useForm();
+
+  // 编辑态
+  const [editFileType, setEditFileType] = useState('xlsx');
+  const [editSheetName, setEditSheetName] = useState('');
+  const [editColumns, setEditColumns] = useState<JournalColumn[]>([]);
 
   const load = (templateId: string) => {
     setLoading(true);
@@ -65,25 +70,32 @@ export function JournalTemplateDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  const openEdit = () => {
+    if (!data) return;
+    const v = data.latest_version;
+    setEditFileType(v.file_type);
+    setEditSheetName(v.sheet_name ?? '');
+    setEditColumns(columnsFromBackend(v.columns_json, v.required_columns_json));
+    setEditOpen(true);
+  };
+
   const handleEdit = async () => {
-    if (!id || !data) return;
-    const values = await form.validateFields();
+    if (!id) return;
     setEditing(true);
     try {
-      const patch: Partial<JournalTemplateVersion> & { file_type: string } = {
-        file_type: values.file_type,
-        sheet_name: values.sheet_name,
+      const { columns_json, required_columns_json } = columnsToBackend(editColumns);
+      await createJournalTemplateVersion(id, {
+        file_type: editFileType,
+        sheet_name: editSheetName,
+        columns_json,
+        required_columns_json,
         created_by: ACTOR
-      };
-      if (values.columns_json) patch.columns_json = JSON.parse(values.columns_json);
-      if (values.required_columns_json)
-        patch.required_columns_json = JSON.parse(values.required_columns_json);
-      await createJournalTemplateVersion(id, patch);
+      });
       message.success('已创建新版本');
       setEditOpen(false);
       load(id);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '创建失败（检查 JSON）');
+      message.error(err instanceof Error ? err.message : '创建失败');
     } finally {
       setEditing(false);
     }
@@ -99,18 +111,6 @@ export function JournalTemplateDetailPage() {
     } catch (err) {
       message.error(err instanceof Error ? err.message : '操作失败');
     }
-  };
-
-  const openEdit = () => {
-    if (!data) return;
-    const v = data.latest_version;
-    form.setFieldsValue({
-      file_type: v.file_type,
-      sheet_name: v.sheet_name,
-      columns_json: v.columns_json ? JSON.stringify(v.columns_json) : '',
-      required_columns_json: v.required_columns_json ? JSON.stringify(v.required_columns_json) : ''
-    });
-    setEditOpen(true);
   };
 
   if (loading) {
@@ -134,21 +134,27 @@ export function JournalTemplateDetailPage() {
   }
 
   const v = data.latest_version;
+  const cols = (v.columns_json as string[]) ?? [];
+  const requiredSet = new Set(((v.required_columns_json as string[]) ?? []).map(String));
+
   const versionColumns: ColumnsType<JournalTemplateVersion> = [
     {
       title: '版本',
       key: 'version_no',
       render: (_, r) => <VersionBadge version={r.version_no} />
     },
-    { title: '文件类型', dataIndex: 'file_type', key: 'file_type' },
     {
-      title: '列定义',
-      key: 'columns_json',
-      render: (_, r) => (
-        <pre style={{ margin: 0, maxHeight: 60, overflow: 'auto' }}>
-          {pretty(r.columns_json)}
-        </pre>
-      )
+      title: '文件类型',
+      key: 'file_type',
+      render: (_, r) => FILE_TYPE_LABEL[r.file_type] ?? r.file_type
+    },
+    {
+      title: '输出列',
+      key: 'columns',
+      render: (_, r) => {
+        const c = (r.columns_json as string[]) ?? [];
+        return <Typography.Text style={{ fontSize: 12 }}>{c.join('、') || '-'}</Typography.Text>;
+      }
     }
   ];
 
@@ -173,6 +179,10 @@ export function JournalTemplateDetailPage() {
         <Descriptions size="small" column={2} bordered>
           <Descriptions.Item label="模板ID">{data.id}</Descriptions.Item>
           <Descriptions.Item label="公司">{data.company_id}</Descriptions.Item>
+          <Descriptions.Item label="文件类型">
+            {FILE_TYPE_LABEL[v.file_type] ?? v.file_type}
+          </Descriptions.Item>
+          <Descriptions.Item label="工作表名">{v.sheet_name ?? '-'}</Descriptions.Item>
           <Descriptions.Item label="状态">
             <StatusTag status={data.status} />
           </Descriptions.Item>
@@ -181,44 +191,55 @@ export function JournalTemplateDetailPage() {
           </Descriptions.Item>
         </Descriptions>
       </Card>
-      <Card className="work-card" title={`版本配置 · v${v.version_no}`}>
-        <Descriptions size="small" column={1} bordered>
-          <Descriptions.Item label="文件类型">{v.file_type}</Descriptions.Item>
-          <Descriptions.Item label="工作表名">{v.sheet_name ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="列定义">
-            <pre style={{ margin: 0 }}>{pretty(v.columns_json)}</pre>
-          </Descriptions.Item>
-          <Descriptions.Item label="必填列">
-            <pre style={{ margin: 0 }}>{pretty(v.required_columns_json)}</pre>
-          </Descriptions.Item>
-        </Descriptions>
+      <Card className="work-card" title={`输出列 · v${v.version_no}`}>
+        <Space wrap size={[8, 8]}>
+          {cols.length > 0 ? (
+            cols.map((col) => (
+              <Tag key={col} color={requiredSet.has(col) ? 'orange' : 'default'}>
+                {col}
+                {requiredSet.has(col) ? '（必填）' : ''}
+              </Tag>
+            ))
+          ) : (
+            <Typography.Text type="secondary">未配置列</Typography.Text>
+          )}
+        </Space>
       </Card>
 
       <Modal
         open={editOpen}
-        title="编辑（创建新版本）"
+        title="编辑日记账模板（创建新版本）"
         okText="创建新版本"
         cancelText="取消"
         confirmLoading={editing}
         onOk={handleEdit}
         onCancel={() => setEditOpen(false)}
         destroyOnClose
-        width={520}
+        width={680}
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="file_type" label="文件类型" rules={[{ required: true }]}>
-            <Select options={[{ value: 'csv', label: 'CSV' }, { value: 'xlsx', label: 'XLSX' }]} />
-          </Form.Item>
-          <Form.Item name="sheet_name" label="Sheet 名">
-            <Input />
-          </Form.Item>
-          <Form.Item name="columns_json" label="列定义（JSON 数组）" extra='例：["日期","摘要","科目","金额"]'>
-            <Input.TextArea rows={2} />
-          </Form.Item>
-          <Form.Item name="required_columns_json" label="必填列（JSON 数组）" extra='例：["日期","科目"]'>
-            <Input.TextArea rows={2} />
-          </Form.Item>
-        </Form>
+        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <Typography.Text strong>文件类型</Typography.Text>
+              <Select
+                style={{ width: '100%', marginTop: 4 }}
+                value={editFileType}
+                onChange={setEditFileType}
+                options={FILE_TYPE_OPTIONS}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <Typography.Text strong>工作表名</Typography.Text>
+              <Input style={{ marginTop: 4 }} value={editSheetName} onChange={(e) => setEditSheetName(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <Typography.Text strong>输出列配置</Typography.Text>
+            <div style={{ marginTop: 4 }}>
+              <JournalColumnsEditor value={editColumns} onChange={setEditColumns} />
+            </div>
+          </div>
+        </div>
       </Modal>
 
       <Modal

@@ -1,10 +1,9 @@
 import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
 import {
+  Alert,
   Button,
   Card,
   Descriptions,
-  Form,
-  Input,
   InputNumber,
   Modal,
   Space,
@@ -24,17 +23,18 @@ import {
   listRuleVersions,
   setRuleStatus
 } from '../api/rules';
+import {
+  RuleEditor,
+  describeRule,
+  ruleDataFromBackend,
+  ruleDataToBackend,
+  type RuleEditorData
+} from '../components/RuleEditor';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { Rule, RuleVersion } from '../types/rules';
 
 const ACTOR = 'user-1';
-
-function pretty(value: unknown): string {
-  if (value === null || value === undefined) return '-';
-  if (typeof value === 'object') return JSON.stringify(value, null, 2);
-  return String(value);
-}
 
 export function RuleDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -45,7 +45,10 @@ export function RuleDetailPage() {
   const [editing, setEditing] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [form] = Form.useForm();
+  // 编辑态
+  const [editData, setEditData] = useState<RuleEditorData>({ logic: 'all', conditions: [], actions: [] });
+  const [editPriority, setEditPriority] = useState(10);
+  const [editAuto, setEditAuto] = useState(false);
 
   const load = (ruleId: string) => {
     setLoading(true);
@@ -67,24 +70,32 @@ export function RuleDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  const openEdit = () => {
+    if (!data) return;
+    const v = data.latest_version;
+    setEditPriority(v.priority ?? 10);
+    setEditAuto(v.allow_auto_confirm);
+    setEditData(ruleDataFromBackend(v.conditions_json, v.actions_json));
+    setEditOpen(true);
+  };
+
   const handleEdit = async () => {
-    if (!id || !data) return;
-    const values = await form.validateFields();
+    if (!id) return;
     setEditing(true);
     try {
-      const patch: Partial<RuleVersion> = {
-        priority: values.priority,
-        allow_auto_confirm: values.allow_auto_confirm,
+      const { conditions_json, actions_json } = ruleDataToBackend(editData);
+      await createRuleVersion(id, {
+        priority: editPriority,
+        conditions_json,
+        actions_json,
+        allow_auto_confirm: editAuto,
         created_by: ACTOR
-      };
-      if (values.conditions_json) patch.conditions_json = JSON.parse(values.conditions_json);
-      if (values.actions_json) patch.actions_json = JSON.parse(values.actions_json);
-      await createRuleVersion(id, patch);
+      });
       message.success('已创建新版本');
       setEditOpen(false);
       load(id);
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '创建失败（检查 JSON）');
+      message.error(err instanceof Error ? err.message : '创建失败');
     } finally {
       setEditing(false);
     }
@@ -100,18 +111,6 @@ export function RuleDetailPage() {
     } catch (err) {
       message.error(err instanceof Error ? err.message : '操作失败');
     }
-  };
-
-  const openEdit = () => {
-    if (!data) return;
-    const v = data.latest_version;
-    form.setFieldsValue({
-      priority: v.priority ?? 10,
-      allow_auto_confirm: v.allow_auto_confirm,
-      conditions_json: v.conditions_json ? JSON.stringify(v.conditions_json) : '',
-      actions_json: v.actions_json ? JSON.stringify(v.actions_json) : ''
-    });
-    setEditOpen(true);
   };
 
   if (loading) {
@@ -135,6 +134,8 @@ export function RuleDetailPage() {
   }
 
   const v = data.latest_version;
+  const currentRuleData = ruleDataFromBackend(v.conditions_json, v.actions_json);
+
   const versionColumns: ColumnsType<RuleVersion> = [
     {
       title: '版本',
@@ -143,12 +144,12 @@ export function RuleDetailPage() {
     },
     { title: '优先级', key: 'priority', render: (_, r) => r.priority ?? '-' },
     {
-      title: '匹配条件',
-      key: 'conditions_json',
+      title: '规则含义',
+      key: 'desc',
       render: (_, r) => (
-        <pre style={{ margin: 0, maxHeight: 60, overflow: 'auto' }}>
-          {pretty(r.conditions_json)}
-        </pre>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          {describeRule(ruleDataFromBackend(r.conditions_json, r.actions_json))}
+        </Typography.Text>
       )
     }
   ];
@@ -184,56 +185,45 @@ export function RuleDetailPage() {
           </Descriptions.Item>
         </Descriptions>
       </Card>
-      <Card className="work-card" title={`版本配置 · v${v.version_no}`}>
-        <Descriptions size="small" column={1} bordered>
-          <Descriptions.Item label="优先级">{v.priority ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="允许自动确认">
-            <Tag color={v.allow_auto_confirm ? 'green' : 'default'}>
-              {v.allow_auto_confirm ? '是' : '否'}
-            </Tag>
-          </Descriptions.Item>
-          <Descriptions.Item label="匹配条件">
-            <pre style={{ margin: 0 }}>{pretty(v.conditions_json)}</pre>
-          </Descriptions.Item>
-          <Descriptions.Item label="执行动作">
-            <pre style={{ margin: 0 }}>{pretty(v.actions_json)}</pre>
-          </Descriptions.Item>
-        </Descriptions>
+
+      <Card className="work-card" title={`配置详情 · v${v.version_no}`}>
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Descriptions size="small" column={2} bordered>
+            <Descriptions.Item label="优先级">{v.priority ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label="允许自动确认">
+              <Tag color={v.allow_auto_confirm ? 'green' : 'default'}>
+                {v.allow_auto_confirm ? '是' : '否'}
+              </Tag>
+            </Descriptions.Item>
+          </Descriptions>
+          <Alert type="info" showIcon message="规则含义" description={describeRule(currentRuleData)} />
+        </Space>
       </Card>
 
       <Modal
         open={editOpen}
-        title="编辑（创建新版本）"
+        title="编辑规则（创建新版本）"
         okText="创建新版本"
         cancelText="取消"
         confirmLoading={editing}
         onOk={handleEdit}
         onCancel={() => setEditOpen(false)}
         destroyOnClose
-        width={560}
+        width={680}
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="priority" label="优先级（数值越小越先执行）">
-            <InputNumber min={0} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="conditions_json"
-            label="匹配条件（JSON）"
-            extra='例：{"all": [{"field": "summary", "op": "contains", "value": "货款"}]}'
-          >
-            <Input.TextArea rows={2} />
-          </Form.Item>
-          <Form.Item
-            name="actions_json"
-            label="执行动作（JSON）"
-            extra='例：{"set": {"account_subject": "银行存款"}}'
-          >
-            <Input.TextArea rows={2} />
-          </Form.Item>
-          <Form.Item name="allow_auto_confirm" label="允许自动确认" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-        </Form>
+        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div>
+              <Typography.Text strong>优先级</Typography.Text>
+              <InputNumber min={0} value={editPriority} onChange={(v2) => setEditPriority(v2 ?? 0)} style={{ width: 120, marginLeft: 8 }} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Switch checked={editAuto} onChange={setEditAuto} />
+              <Typography.Text>允许自动确认</Typography.Text>
+            </div>
+          </div>
+          <RuleEditor value={editData} onChange={setEditData} />
+        </div>
       </Modal>
 
       <Modal

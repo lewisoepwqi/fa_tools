@@ -1,18 +1,5 @@
 import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
-import {
-  Button,
-  Card,
-  Descriptions,
-  Form,
-  InputNumber,
-  Modal,
-  Select,
-  Space,
-  Spin,
-  Table,
-  Typography,
-  message
-} from 'antd';
+import { Button, Card, Descriptions, Modal, Space, Spin, Table, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -22,23 +9,15 @@ import {
   listBankTemplateVersions,
   setBankTemplateStatus
 } from '../api/bankTemplates';
+import { AMOUNT_MODE_LABEL, FILE_TYPE_LABEL, rowIndexOf } from '../constants';
+import { BankTemplateWizard } from '../components/BankTemplateWizard';
+import type { BankTemplateWizardValues } from '../components/BankTemplateWizard';
+import { DetectResultView } from '../components/DetectResultView';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { BankTemplate, BankTemplateVersion } from '../types/templates';
 
 const ACTOR = 'user-1';
-const AMOUNT_MODES = [
-  { value: 'income_expense_columns', label: '收入/支出双列' },
-  { value: 'debit_credit_columns', label: '借方/贷方双列' },
-  { value: 'single_amount_with_direction', label: '单金额+方向列' },
-  { value: 'signed_amount', label: '带符号金额' }
-];
-
-function pretty(value: unknown): string {
-  if (value === null || value === undefined) return '-';
-  if (typeof value === 'object') return JSON.stringify(value, null, 2);
-  return String(value);
-}
 
 export function BankTemplateDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -49,7 +28,6 @@ export function BankTemplateDetailPage() {
   const [editing, setEditing] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [form] = Form.useForm();
 
   const load = (templateId: string) => {
     setLoading(true);
@@ -71,16 +49,24 @@ export function BankTemplateDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const handleEdit = async () => {
-    if (!id || !data) return;
-    const values = await form.validateFields();
+  const openEdit = () => {
+    setEditOpen(true);
+  };
+
+  const handleEditSubmit = async (values: BankTemplateWizardValues) => {
+    if (!id) return;
     setEditing(true);
     try {
       await createBankTemplateVersion(id, {
-        file_type: values.file_type,
-        header_row_index: values.header_row_index,
-        data_start_row_index: values.data_start_row_index,
-        amount_mode: values.amount_mode,
+        file_type: values.detect.file_type,
+        sheet_selector_json: values.detect.sheet_name ? { sheet_name: values.detect.sheet_name } : null,
+        header_row_index: values.detect.header_row_index,
+        data_start_row_index: values.detect.data_start_row_index,
+        field_aliases_json: values.detect.field_aliases,
+        amount_mode: values.detect.amount_mode,
+        amount_config_json: values.detect.amount_config,
+        date_formats_json: values.detect.date_formats,
+        sample_file_id: values.sample_file_id ?? null,
         created_by: ACTOR
       });
       message.success('已创建新版本');
@@ -105,18 +91,6 @@ export function BankTemplateDetailPage() {
     }
   };
 
-  const openEdit = () => {
-    if (!data) return;
-    const v = data.latest_version;
-    form.setFieldsValue({
-      file_type: v.file_type,
-      header_row_index: v.header_row_index ?? 0,
-      data_start_row_index: v.data_start_row_index ?? 1,
-      amount_mode: v.amount_mode
-    });
-    setEditOpen(true);
-  };
-
   if (loading) {
     return (
       <Card className="work-card">
@@ -138,27 +112,32 @@ export function BankTemplateDetailPage() {
   }
 
   const v = data.latest_version;
+
   const versionColumns: ColumnsType<BankTemplateVersion> = [
     {
       title: '版本',
       key: 'version_no',
       render: (_, r) => <VersionBadge version={r.version_no} />
     },
-    { title: '文件类型', dataIndex: 'file_type', key: 'file_type' },
-    { title: '金额模式', dataIndex: 'amount_mode', key: 'amount_mode' },
     {
-      title: '表头行',
-      key: 'header_row_index',
-      render: (_, r) => r.header_row_index ?? '-'
+      title: '文件类型',
+      key: 'file_type',
+      render: (_, r) => FILE_TYPE_LABEL[r.file_type] ?? r.file_type
     },
     {
-      title: '字段别名',
-      key: 'field_aliases_json',
-      render: (_, r) => (
-        <pre style={{ margin: 0, maxHeight: 80, overflow: 'auto' }}>
-          {pretty(r.field_aliases_json)}
-        </pre>
-      )
+      title: '金额格式',
+      key: 'amount_mode',
+      render: (_, r) => AMOUNT_MODE_LABEL[r.amount_mode] ?? r.amount_mode
+    },
+    {
+      title: '表头位置',
+      key: 'header_row_index',
+      render: (_, r) => rowIndexOf(r.header_row_index)
+    },
+    {
+      title: '字段映射数',
+      key: 'field_aliases',
+      render: (_, r) => Object.keys(r.field_aliases_json ?? {}).length
     }
   ];
 
@@ -193,51 +172,42 @@ export function BankTemplateDetailPage() {
           </Descriptions.Item>
         </Descriptions>
       </Card>
-      <Card className="work-card" title={`版本配置 · v${v.version_no}`}>
-        <Descriptions size="small" column={1} bordered>
-          <Descriptions.Item label="文件类型">{v.file_type}</Descriptions.Item>
-          <Descriptions.Item label="表头行">{v.header_row_index ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="数据起始行">{v.data_start_row_index ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="金额模式">{v.amount_mode}</Descriptions.Item>
-          <Descriptions.Item label="字段别名">
-            <pre style={{ margin: 0 }}>{pretty(v.field_aliases_json)}</pre>
-          </Descriptions.Item>
-          <Descriptions.Item label="金额配置">
-            <pre style={{ margin: 0 }}>{pretty(v.amount_config_json)}</pre>
-          </Descriptions.Item>
-          <Descriptions.Item label="日期格式">
-            <pre style={{ margin: 0 }}>{pretty(v.date_formats_json)}</pre>
-          </Descriptions.Item>
-        </Descriptions>
+      <Card className="work-card" title={`配置详情 · v${v.version_no}`}>
+        <DetectResultView config={v} />
       </Card>
 
+      {/* 编辑（创建新版本）：用向导，回填当前版本配置作为起点 */}
       <Modal
         open={editOpen}
-        title="编辑（创建新版本）"
-        okText="创建新版本"
-        cancelText="取消"
-        confirmLoading={editing}
-        onOk={handleEdit}
+        title="编辑模板（创建新版本）"
+        footer={null}
         onCancel={() => setEditOpen(false)}
         destroyOnClose
+        width={680}
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="file_type" label="文件类型" rules={[{ required: true }]}>
-            <Select options={[{ value: 'csv', label: 'CSV' }, { value: 'xlsx', label: 'XLSX' }]} />
-          </Form.Item>
-          <Form.Item name="amount_mode" label="金额模式" rules={[{ required: true }]}>
-            <Select options={AMOUNT_MODES} />
-          </Form.Item>
-          <Form.Item name="header_row_index" label="表头行（0 基）">
-            <InputNumber min={0} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="data_start_row_index" label="数据起始行（0 基）">
-            <InputNumber min={0} style={{ width: '100%' }} />
-          </Form.Item>
-        </Form>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          编辑会创建新版本（旧版本不可变，历史批次仍引用旧版本）。
-        </Typography.Text>
+        <div style={{ marginTop: 16 }}>
+          <BankTemplateWizard
+            onSubmit={handleEditSubmit}
+            onCancel={() => setEditOpen(false)}
+            submitting={editing}
+            skipUpload
+            initialValues={{
+              name: data.name,
+              bank_name: data.bank_name ?? undefined,
+              detect: {
+                file_type: v.file_type,
+                sheet_name: (v.sheet_selector_json as { sheet_name?: string } | null)?.sheet_name ?? '',
+                header_row_index: v.header_row_index ?? 0,
+                data_start_row_index: v.data_start_row_index ?? 1,
+                field_aliases: (v.field_aliases_json ?? {}) as Record<string, string>,
+                amount_mode: v.amount_mode,
+                amount_config: (v.amount_config_json ?? {}) as Record<string, string>,
+                date_formats: (v.date_formats_json ?? []) as string[]
+              },
+              sample_file_id: v.sample_file_id ?? undefined
+            }}
+          />
+        </div>
       </Modal>
 
       <Modal
