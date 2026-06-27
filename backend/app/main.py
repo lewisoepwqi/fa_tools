@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.api.routes import (
+    audit,
     bank_templates,
     conversion_runs,
     exports,
@@ -12,6 +13,7 @@ from app.api.routes import (
 )
 
 app = FastAPI(title="FA Tools API", version="0.1.0")
+app.include_router(audit.router)
 app.include_router(files.router)
 app.include_router(bank_templates.router)
 app.include_router(journal_templates.router)
