@@ -1,5 +1,5 @@
-from decimal import Decimal
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -110,9 +110,26 @@ def test_parse_xlsx_statement_with_native_excel_dates(tmp_path: Path) -> None:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Sheet1"
-    sheet.append(["交易日期", "入账日期", "收入", "支出", "余额", "对方户名", "对方账号", "摘要", "用途", "流水号"])
-    sheet.append([date(2026, 6, 1), date(2026, 6, 1), "12000.00", "", "98000.00", "某客户有限公司", "6222000000000000", "货款", "6月服务费", "TXN001"])
-    sheet.append([date(2026, 6, 2), date(2026, 6, 2), "", "3000.00", "95000.00", "某供应商有限公司", "6222111111111111", "采购款", "办公用品", "TXN002"])
+    sheet.append(
+        [
+            "交易日期", "入账日期", "收入", "支出", "余额",
+            "对方户名", "对方账号", "摘要", "用途", "流水号",
+        ]
+    )
+    sheet.append(
+        [
+            date(2026, 6, 1), date(2026, 6, 1), "12000.00", "",
+            "98000.00", "某客户有限公司", "6222000000000000",
+            "货款", "6月服务费", "TXN001",
+        ]
+    )
+    sheet.append(
+        [
+            date(2026, 6, 2), date(2026, 6, 2), "", "3000.00",
+            "95000.00", "某供应商有限公司", "6222111111111111",
+            "采购款", "办公用品", "TXN002",
+        ]
+    )
     sheet.append(["", "", "", "", "", "", "", "", "", ""])
     workbook.save(fixture)
 

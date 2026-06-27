@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, UniqueConstraint, func, text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -27,7 +27,11 @@ class BankTemplate(Base, IdMixin, TimestampMixin):
 class BankTemplateVersion(Base, IdMixin):
     __tablename__ = "bank_template_versions"
     __table_args__ = (
-        UniqueConstraint("bank_template_id", "version_no", name="uq_bank_template_versions_version"),
+        UniqueConstraint(
+            "bank_template_id",
+            "version_no",
+            name="uq_bank_template_versions_version",
+        ),
     )
 
     bank_template_id: Mapped[str] = mapped_column(ForeignKey("bank_templates.id"), nullable=False)

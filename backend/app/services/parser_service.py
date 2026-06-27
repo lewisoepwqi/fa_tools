@@ -170,7 +170,10 @@ def _build_raw_row(header_row: list[CellValue], row: list[CellValue]) -> dict[st
     return raw_row
 
 
-def _normalize_row(raw_row: dict[str, CellValue], field_aliases: dict[str, str]) -> dict[str, CellValue]:
+def _normalize_row(
+    raw_row: dict[str, CellValue],
+    field_aliases: dict[str, str],
+) -> dict[str, CellValue]:
     normalized: dict[str, CellValue] = {}
 
     for header, value in raw_row.items():
@@ -193,7 +196,12 @@ def _parse_amounts(
     income = _decimal_or_none(normalized_row.get(amount_config["income"]))
     expense = _decimal_or_none(normalized_row.get(amount_config["expense"]))
 
-    if income is not None and expense is not None and income != Decimal("0") and expense != Decimal("0"):
+    if (
+        income is not None
+        and expense is not None
+        and income != Decimal("0")
+        and expense != Decimal("0")
+    ):
         raise ValueError("Both income and expense amounts are populated")
 
     if income is not None and income != Decimal("0"):

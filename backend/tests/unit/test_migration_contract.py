@@ -45,12 +45,16 @@ def test_initial_migration_matches_contract(tmp_path: Path, monkeypatch) -> None
         assert _normalized_default(allow_auto_confirm["default"]) in {"0", "false"}
 
         export_only_confirmed = next(
-            column for column in inspector.get_columns("exports") if column["name"] == "only_confirmed"
+            column
+            for column in inspector.get_columns("exports")
+            if column["name"] == "only_confirmed"
         )
         assert _normalized_default(export_only_confirmed["default"]) in {"0", "false"}
 
         bank_account_currency = next(
-            column for column in inspector.get_columns("bank_accounts") if column["name"] == "currency"
+            column
+            for column in inspector.get_columns("bank_accounts")
+            if column["name"] == "currency"
         )
         assert _normalized_default(bank_account_currency["default"]) == "cny"
 
@@ -64,7 +68,9 @@ def test_initial_migration_matches_contract(tmp_path: Path, monkeypatch) -> None
         if net_amount_type.scale is not None:
             assert net_amount_type.scale == 2
 
-        preview_columns = {column["name"] for column in inspector.get_columns("journal_preview_rows")}
+        preview_columns = {
+            column["name"] for column in inspector.get_columns("journal_preview_rows")
+        }
         assert {
             "output_values_json",
             "exception_codes_json",

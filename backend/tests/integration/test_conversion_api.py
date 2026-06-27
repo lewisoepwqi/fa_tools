@@ -1,5 +1,6 @@
-import pytest
 from pathlib import Path
+
+import pytest
 
 from app.core.config import get_settings
 
@@ -83,7 +84,13 @@ def test_create_bank_template_version(client) -> None:
 def test_start_conversion_run_creates_preview_rows(client) -> None:
     upload = client.post(
         "/api/files/upload",
-        files={"file": ("bank_statement_basic.csv", (Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv").read_bytes(), "text/csv")},
+        files={
+            "file": (
+                "bank_statement_basic.csv",
+                (Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv").read_bytes(),
+                "text/csv",
+            )
+        },
         data={"company_id": "company-1", "uploaded_by": "user-1"},
     ).json()
 
@@ -125,7 +132,9 @@ def test_start_conversion_run_creates_preview_rows(client) -> None:
                     "id": "rule-1",
                     "version_id": "rule-version-1",
                     "priority": 10,
-                    "conditions": {"all": [{"field": "summary", "op": "contains", "value": "货款"}]},
+                    "conditions": {
+                        "all": [{"field": "summary", "op": "contains", "value": "货款"}]
+                    },
                     "actions": [
                         {"field": "journal_summary", "value": "收到客户款项"},
                         {"field": "account_subject", "value": "银行存款"}
@@ -147,7 +156,13 @@ def test_start_conversion_run_creates_preview_rows(client) -> None:
 def test_confirm_preview_row_after_manual_adjustment(client) -> None:
     upload = client.post(
         "/api/files/upload",
-        files={"file": ("bank_statement_basic.csv", (Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv").read_bytes(), "text/csv")},
+        files={
+            "file": (
+                "bank_statement_basic.csv",
+                (Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv").read_bytes(),
+                "text/csv",
+            )
+        },
         data={"company_id": "company-1", "uploaded_by": "user-1"},
     ).json()
 
@@ -189,7 +204,9 @@ def test_confirm_preview_row_after_manual_adjustment(client) -> None:
                     "id": "rule-1",
                     "version_id": "rule-version-1",
                     "priority": 10,
-                    "conditions": {"all": [{"field": "summary", "op": "contains", "value": "货款"}]},
+                    "conditions": {
+                        "all": [{"field": "summary", "op": "contains", "value": "货款"}]
+                    },
                     "actions": [
                         {"field": "journal_summary", "value": "收到客户款项"},
                         {"field": "account_subject", "value": "银行存款"}

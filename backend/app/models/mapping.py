@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, UniqueConstraint, func, text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -30,7 +30,10 @@ class MappingProfileVersion(Base, IdMixin):
         UniqueConstraint("mapping_profile_id", "version_no", name="uq_mapping_profile_versions"),
     )
 
-    mapping_profile_id: Mapped[str] = mapped_column(ForeignKey("mapping_profiles.id"), nullable=False)
+    mapping_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("mapping_profiles.id"),
+        nullable=False,
+    )
     version_no: Mapped[int] = mapped_column(Integer, nullable=False)
     bank_template_version_id: Mapped[str | None] = mapped_column(
         ForeignKey("bank_template_versions.id")
