@@ -41,12 +41,12 @@ def test_detect_then_create_template(client, dirs) -> None:
     """P1-8: detect 识别后创建银行模板。"""
     upload = _upload(client)
     detected = client.post(
-        "/api/bank-templates/detect", json={"source_file_id": upload["id"]}
+        "/api/tools/bank-journal/bank-templates/detect", json={"source_file_id": upload["id"]}
     ).json()
     assert detected["amount_mode"] == "income_expense_columns"
 
     created = client.post(
-        "/api/bank-templates",
+        "/api/tools/bank-journal/bank-templates",
         json={
             "company_id": "company-1",
             "name": "自动识别模板",
@@ -70,7 +70,7 @@ def test_full_flow_versioning_snapshot_export_report(client, dirs) -> None:
 
     # 创建 4 个版本化实体
     bank_tpl = client.post(
-        "/api/bank-templates",
+        "/api/tools/bank-journal/bank-templates",
         json={
             "company_id": "company-1",
             "name": "银行模板",
@@ -82,7 +82,7 @@ def test_full_flow_versioning_snapshot_export_report(client, dirs) -> None:
         },
     ).json()
     journal_tpl = client.post(
-        "/api/journal-templates",
+        "/api/tools/bank-journal/journal-templates",
         json={
             "company_id": "company-1",
             "name": "日记账模板",
@@ -95,7 +95,7 @@ def test_full_flow_versioning_snapshot_export_report(client, dirs) -> None:
     ).json()
     assert journal_tpl["latest_version"]["version_no"] == 1
     mapping = client.post(
-        "/api/mapping-profiles",
+        "/api/tools/bank-journal/mapping-profiles",
         json={
             "company_id": "company-1",
             "name": "映射",
@@ -107,7 +107,7 @@ def test_full_flow_versioning_snapshot_export_report(client, dirs) -> None:
     ).json()
     assert mapping["status"] == "active"
     rule = client.post(
-        "/api/rules",
+        "/api/tools/bank-journal/rules",
         json={
             "company_id": "company-1",
             "name": "规则",
@@ -125,14 +125,14 @@ def test_full_flow_versioning_snapshot_export_report(client, dirs) -> None:
 
     # P0-1: 编辑=新版本（版本号递增）
     bank_tpl_v2 = client.post(
-        f"/api/bank-templates/{bank_tpl['id']}/versions",
+        f"/api/tools/bank-journal/bank-templates/{bank_tpl['id']}/versions",
         json={"file_type": "csv", "amount_mode": "income_expense_columns", "created_by": "user-1"},
     ).json()
     assert bank_tpl_v2["latest_version"]["version_no"] == 2
 
     # P0-2: 转换批次携带版本快照
     run = client.post(
-        "/api/conversion-runs",
+        "/api/tools/bank-journal/conversion-runs",
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -183,14 +183,14 @@ def test_full_flow_versioning_snapshot_export_report(client, dirs) -> None:
     first_row = run["preview_rows"][0]
     assert first_row["id"] is not None
     confirm = client.post(
-        f"/api/preview-rows/{first_row['id']}/confirm",
+        f"/api/tools/bank-journal/preview-rows/{first_row['id']}/confirm",
         json={"confirmed_by": "user-1"},
     ).json()
     assert confirm["status"] == "manually_confirmed"
 
     # P0-3: 仅导出已确认（应只含 1 行）
     export = client.post(
-        f"/api/conversion-runs/{run['id']}/exports",
+        f"/api/tools/bank-journal/conversion-runs/{run['id']}/exports",
         json={
             "file_type": "xlsx",
             "columns": ["日期", "科目", "金额"],
@@ -211,7 +211,7 @@ def test_full_flow_versioning_snapshot_export_report(client, dirs) -> None:
 
     # P0-5: 必填字段校验（要求不存在的字段 → 422）
     bad = client.post(
-        f"/api/conversion-runs/{run['id']}/exports",
+        f"/api/tools/bank-journal/conversion-runs/{run['id']}/exports",
         json={
             "file_type": "csv",
             "columns": ["日期", "金额"],
@@ -230,6 +230,6 @@ def test_full_flow_versioning_snapshot_export_report(client, dirs) -> None:
 
     # P2-4: 停用规则
     disabled = client.patch(
-        f"/api/rules/{rule['id']}/status", params={"status": "inactive"}
+        f"/api/tools/bank-journal/rules/{rule['id']}/status", params={"status": "inactive"}
     ).json()
     assert disabled["status"] == "inactive"

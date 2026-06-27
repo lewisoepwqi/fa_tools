@@ -1,8 +1,8 @@
 from decimal import Decimal
 
-from app.core.enums import ExceptionCode, PreviewStatus, TransactionDirection
-from app.schemas.standard import StandardBankTransaction
-from app.services.conversion_service import build_preview_row
+from app.tools.bank_journal.enums import ExceptionCode, PreviewStatus, TransactionDirection
+from app.tools.bank_journal.schemas.standard import StandardBankTransaction
+from app.tools.bank_journal.services.conversion_service import build_preview_row
 
 
 def test_build_preview_row_requires_confirmation_when_required_field_missing() -> None:

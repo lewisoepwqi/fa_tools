@@ -1,18 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import (
-    audit,
-    bank_templates,
-    conversion_runs,
-    exports,
-    files,
-    journal_templates,
-    mapping_profiles,
-    preview_rows,
-    rules,
-)
+from app.api.routes import audit, files
 from app.core.config import get_settings
+from app.tools.bank_journal import register as register_bank_journal
 
 settings = get_settings()
 
@@ -25,15 +16,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 平台共享路由（文件上传、审计日志）。
 app.include_router(audit.router)
 app.include_router(files.router)
-app.include_router(bank_templates.router)
-app.include_router(journal_templates.router)
-app.include_router(mapping_profiles.router)
-app.include_router(rules.router)
-app.include_router(conversion_runs.router)
-app.include_router(preview_rows.router)
-app.include_router(exports.router)
+# 工具：银行流水转公司日记账（新增工具时在此注册其 register 函数）。
+register_bank_journal(app)
 
 
 @app.get("/health")

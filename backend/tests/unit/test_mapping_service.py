@@ -2,9 +2,9 @@ from decimal import Decimal
 
 import pytest
 
-from app.core.enums import TransactionDirection
-from app.schemas.standard import StandardBankTransaction
-from app.services.mapping_service import apply_mappings
+from app.tools.bank_journal.enums import TransactionDirection
+from app.tools.bank_journal.schemas.standard import StandardBankTransaction
+from app.tools.bank_journal.services.mapping_service import apply_mappings
 
 
 def _transaction(**overrides: object) -> StandardBankTransaction:

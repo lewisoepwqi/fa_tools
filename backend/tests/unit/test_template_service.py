@@ -1,8 +1,11 @@
-from app.models.conversion import JournalPreviewRow
 from app.models.file import SourceFile
-from app.models.rule import RuleVersion
-from app.models.template import BankTemplateVersion, CompanyJournalTemplateVersion
 from app.models.user import User
+from app.tools.bank_journal.models.conversion import JournalPreviewRow
+from app.tools.bank_journal.models.rule import RuleVersion
+from app.tools.bank_journal.models.template import (
+    BankTemplateVersion,
+    CompanyJournalTemplateVersion,
+)
 
 
 def test_bank_template_version_has_versioned_parser_config() -> None:

@@ -35,7 +35,7 @@ def _create_run(client) -> dict:
         data={"company_id": "company-1", "uploaded_by": "user-1"},
     ).json()
     return client.post(
-        "/api/conversion-runs",
+        "/api/tools/bank-journal/conversion-runs",
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -90,7 +90,7 @@ def _create_run(client) -> dict:
 def test_list_conversion_runs_returns_items_without_preview_rows(client, upload_dir) -> None:
     created = _create_run(client)
 
-    response = client.get("/api/conversion-runs")
+    response = client.get("/api/tools/bank-journal/conversion-runs")
 
     assert response.status_code == 200
     items = response.json()
@@ -107,8 +107,12 @@ def test_list_conversion_runs_returns_items_without_preview_rows(client, upload_
 def test_list_conversion_runs_filter_by_company(client, upload_dir) -> None:
     _create_run(client)
 
-    response = client.get("/api/conversion-runs", params={"company_id": "company-1"})
-    response_other = client.get("/api/conversion-runs", params={"company_id": "no-such-company"})
+    response = client.get(
+        "/api/tools/bank-journal/conversion-runs", params={"company_id": "company-1"}
+    )
+    response_other = client.get(
+        "/api/tools/bank-journal/conversion-runs", params={"company_id": "no-such-company"}
+    )
 
     assert response.status_code == 200
     assert len(response.json()) >= 1
@@ -118,7 +122,7 @@ def test_list_conversion_runs_filter_by_company(client, upload_dir) -> None:
 def test_get_conversion_run_detail_returns_preview_rows(client, upload_dir) -> None:
     created = _create_run(client)
 
-    response = client.get(f"/api/conversion-runs/{created['id']}")
+    response = client.get(f"/api/tools/bank-journal/conversion-runs/{created['id']}")
 
     assert response.status_code == 200
     detail = response.json()
@@ -144,7 +148,9 @@ def test_get_conversion_run_detail_returns_preview_rows(client, upload_dir) -> N
 
 
 def test_get_conversion_run_detail_404_when_missing(client) -> None:
-    response = client.get("/api/conversion-runs/00000000-0000-0000-0000-000000000000")
+    response = client.get(
+        "/api/tools/bank-journal/conversion-runs/00000000-0000-0000-0000-000000000000"
+    )
     assert response.status_code == 404
 
 
@@ -155,7 +161,7 @@ def test_get_conversion_run_detail_404_when_missing(client) -> None:
 
 def _create_bank_template(client) -> dict:
     return client.post(
-        "/api/bank-templates",
+        "/api/tools/bank-journal/bank-templates",
         json={
             "company_id": "company-1",
             "name": "中国银行 CSV",
@@ -176,7 +182,7 @@ def _create_bank_template(client) -> dict:
 def test_get_bank_template_detail(client) -> None:
     created = _create_bank_template(client)
 
-    response = client.get(f"/api/bank-templates/{created['id']}")
+    response = client.get(f"/api/tools/bank-journal/bank-templates/{created['id']}")
 
     assert response.status_code == 200
     detail = response.json()
@@ -187,7 +193,7 @@ def test_get_bank_template_detail(client) -> None:
 
 
 def test_get_bank_template_detail_404_when_missing(client) -> None:
-    assert client.get("/api/bank-templates/nope").status_code == 404
+    assert client.get("/api/tools/bank-journal/bank-templates/nope").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +203,7 @@ def test_get_bank_template_detail_404_when_missing(client) -> None:
 
 def _create_journal_template(client) -> dict:
     return client.post(
-        "/api/journal-templates",
+        "/api/tools/bank-journal/journal-templates",
         json={
             "company_id": "company-1",
             "name": "标准日记账",
@@ -215,7 +221,7 @@ def _create_journal_template(client) -> dict:
 def test_get_journal_template_detail(client) -> None:
     created = _create_journal_template(client)
 
-    response = client.get(f"/api/journal-templates/{created['id']}")
+    response = client.get(f"/api/tools/bank-journal/journal-templates/{created['id']}")
 
     assert response.status_code == 200
     detail = response.json()
@@ -225,7 +231,7 @@ def test_get_journal_template_detail(client) -> None:
 
 
 def test_get_journal_template_detail_404_when_missing(client) -> None:
-    assert client.get("/api/journal-templates/nope").status_code == 404
+    assert client.get("/api/tools/bank-journal/journal-templates/nope").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +241,7 @@ def test_get_journal_template_detail_404_when_missing(client) -> None:
 
 def _create_mapping_profile(client) -> dict:
     return client.post(
-        "/api/mapping-profiles",
+        "/api/tools/bank-journal/mapping-profiles",
         json={
             "company_id": "company-1",
             "name": "默认映射",
@@ -250,7 +256,7 @@ def _create_mapping_profile(client) -> dict:
 def test_get_mapping_profile_detail(client) -> None:
     created = _create_mapping_profile(client)
 
-    response = client.get(f"/api/mapping-profiles/{created['id']}")
+    response = client.get(f"/api/tools/bank-journal/mapping-profiles/{created['id']}")
 
     assert response.status_code == 200
     detail = response.json()
@@ -260,7 +266,7 @@ def test_get_mapping_profile_detail(client) -> None:
 
 
 def test_get_mapping_profile_detail_404_when_missing(client) -> None:
-    assert client.get("/api/mapping-profiles/nope").status_code == 404
+    assert client.get("/api/tools/bank-journal/mapping-profiles/nope").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +276,7 @@ def test_get_mapping_profile_detail_404_when_missing(client) -> None:
 
 def _create_rule(client) -> dict:
     return client.post(
-        "/api/rules",
+        "/api/tools/bank-journal/rules",
         json={
             "company_id": "company-1",
             "name": "货款收入规则",
@@ -290,7 +296,7 @@ def _create_rule(client) -> dict:
 def test_get_rule_detail(client) -> None:
     created = _create_rule(client)
 
-    response = client.get(f"/api/rules/{created['id']}")
+    response = client.get(f"/api/tools/bank-journal/rules/{created['id']}")
 
     assert response.status_code == 200
     detail = response.json()
@@ -301,7 +307,7 @@ def test_get_rule_detail(client) -> None:
 
 
 def test_get_rule_detail_404_when_missing(client) -> None:
-    assert client.get("/api/rules/nope").status_code == 404
+    assert client.get("/api/tools/bank-journal/rules/nope").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +323,7 @@ def test_conversion_run_snapshots_version_ids(client, upload_dir) -> None:
         data={"company_id": "company-1", "uploaded_by": "user-1"},
     ).json()
     response = client.post(
-        "/api/conversion-runs",
+        "/api/tools/bank-journal/conversion-runs",
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -352,10 +358,10 @@ def test_conversion_run_snapshots_version_ids(client, upload_dir) -> None:
     assert created["mapping_profile_version_id"] == "mpv-1"
 
     # 详情端点也应返回版本快照
-    detail = client.get(f"/api/conversion-runs/{created['id']}").json()
+    detail = client.get(f"/api/tools/bank-journal/conversion-runs/{created['id']}").json()
     assert detail["bank_template_version_id"] == "btv-1"
 
     # 列表端点也应返回版本快照
-    items = client.get("/api/conversion-runs").json()
+    items = client.get("/api/tools/bank-journal/conversion-runs").json()
     matched = next(item for item in items if item["id"] == created["id"])
     assert matched["mapping_profile_version_id"] == "mpv-1"

@@ -1,4 +1,4 @@
-"""P1-8: /api/bank-templates/detect 端点测试。
+"""P1-8: /api/tools/bank-journal/bank-templates/detect 端点测试。
 
 上传样本文件后，系统应自动识别：表头行、数据起始行、字段别名、金额模式、
 日期格式（PRD §5.1.3 / §9.1）。
@@ -34,7 +34,7 @@ def test_detect_returns_auto_recognized_config(client, upload_dir) -> None:
     upload = _upload(client)
 
     response = client.post(
-        "/api/bank-templates/detect",
+        "/api/tools/bank-journal/bank-templates/detect",
         json={"source_file_id": upload["id"]},
     )
 
@@ -57,7 +57,7 @@ def test_detect_returns_auto_recognized_config(client, upload_dir) -> None:
 
 def test_detect_404_when_source_file_missing(client, upload_dir) -> None:
     response = client.post(
-        "/api/bank-templates/detect",
+        "/api/tools/bank-journal/bank-templates/detect",
         json={"source_file_id": "00000000-0000-0000-0000-000000000000"},
     )
     assert response.status_code == 404

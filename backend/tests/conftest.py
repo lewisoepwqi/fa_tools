@@ -11,7 +11,9 @@ from app.db.base import Base
 from app.main import app
 
 # Import all models so their tables register on Base.metadata before create_all.
-from app.models import audit, company, conversion, file, mapping, rule, template, user  # noqa: F401
+# 共享层模型 + 工具层模型（bank_journal）。
+from app.models import audit, company, file, user  # noqa: F401
+from app.tools.bank_journal import models  # noqa: F401  bank_journal 工具模型
 
 
 def _create_test_engine():

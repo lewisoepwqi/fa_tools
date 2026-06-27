@@ -27,7 +27,7 @@ def _create_run(client) -> dict:
         data={"company_id": "company-1", "uploaded_by": "user-1"},
     ).json()
     return client.post(
-        "/api/conversion-runs",
+        "/api/tools/bank-journal/conversion-runs",
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -60,7 +60,7 @@ def test_export_inline_rows_returns_download_metadata(client, upload_dir) -> Non
     """历史用法：客户端直接传入 rows（不查库）。"""
     created = _create_run(client)
     response = client.post(
-        f"/api/conversion-runs/{created['id']}/exports",
+        f"/api/tools/bank-journal/conversion-runs/{created['id']}/exports",
         json={
             "file_type": "csv",
             "columns": ["日期", "金额"],
@@ -73,14 +73,14 @@ def test_export_inline_rows_returns_download_metadata(client, upload_dir) -> Non
     payload = response.json()
     assert payload["file_type"] == "csv"
     assert payload["row_count"] == 1
-    assert payload["download_url"].startswith("/api/exports/")
-    assert payload["report_url"].startswith("/api/exports/")
+    assert payload["download_url"].startswith("/api/tools/bank-journal/exports/")
+    assert payload["report_url"].startswith("/api/tools/bank-journal/exports/")
 
 
 def test_download_export_returns_file_contents(client, upload_dir) -> None:
     created = _create_run(client)
     create = client.post(
-        f"/api/conversion-runs/{created['id']}/exports",
+        f"/api/tools/bank-journal/conversion-runs/{created['id']}/exports",
         json={
             "file_type": "csv",
             "columns": ["日期", "金额"],
@@ -95,7 +95,7 @@ def test_download_export_returns_file_contents(client, upload_dir) -> None:
 
 def test_export_404_when_run_missing(client, upload_dir) -> None:
     response = client.post(
-        "/api/conversion-runs/00000000-0000-0000-0000-000000000000/exports",
+        "/api/tools/bank-journal/conversion-runs/00000000-0000-0000-0000-000000000000/exports",
         json={"file_type": "csv", "columns": ["日期"]},
     )
     assert response.status_code == 404
@@ -106,7 +106,7 @@ def test_export_from_db_rows_without_only_confirmed(client, upload_dir) -> None:
     created = _create_run(client)
 
     response = client.post(
-        f"/api/conversion-runs/{created['id']}/exports",
+        f"/api/tools/bank-journal/conversion-runs/{created['id']}/exports",
         json={"file_type": "csv", "columns": ["日期", "金额"], "exported_by": "user-1"},
     )
 
@@ -120,7 +120,7 @@ def test_export_only_confirmed_filters_needs_confirmation(client, upload_dir) ->
     # 无规则命中，所有行都是 needs_confirmation
 
     response = client.post(
-        f"/api/conversion-runs/{created['id']}/exports",
+        f"/api/tools/bank-journal/conversion-runs/{created['id']}/exports",
         json={
             "file_type": "csv",
             "columns": ["日期", "金额"],
@@ -137,7 +137,7 @@ def test_export_required_columns_validation_422(client, upload_dir) -> None:
     """P0-5: required_columns 中字段缺失 → 422。"""
     created = _create_run(client)
     response = client.post(
-        f"/api/conversion-runs/{created['id']}/exports",
+        f"/api/tools/bank-journal/conversion-runs/{created['id']}/exports",
         json={
             "file_type": "csv",
             "columns": ["日期", "金额"],
@@ -155,7 +155,7 @@ def test_export_generates_processing_report(client, upload_dir) -> None:
     """P0-4: 导出同时生成处理报告，可下载，含 11 项字段。"""
     created = _create_run(client)
     export_response = client.post(
-        f"/api/conversion-runs/{created['id']}/exports",
+        f"/api/tools/bank-journal/conversion-runs/{created['id']}/exports",
         json={"file_type": "csv", "columns": ["日期", "金额"], "exported_by": "user-1"},
     ).json()
 
@@ -183,5 +183,5 @@ def test_export_generates_processing_report(client, upload_dir) -> None:
 
 
 def test_export_report_404_when_missing(client, upload_dir) -> None:
-    response = client.get("/api/exports/no-such-export/report")
+    response = client.get("/api/tools/bank-journal/exports/no-such-export/report")
     assert response.status_code == 404

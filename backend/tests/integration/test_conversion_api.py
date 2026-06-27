@@ -53,7 +53,7 @@ def test_upload_unsupported_file_type_returns_client_error(client, upload_dir) -
 
 def test_create_bank_template_version(client) -> None:
     response = client.post(
-        "/api/bank-templates",
+        "/api/tools/bank-journal/bank-templates",
         json={
             "company_id": "company-1",
             "name": "中国银行 CSV",
@@ -95,7 +95,7 @@ def test_start_conversion_run_creates_preview_rows(client) -> None:
     ).json()
 
     response = client.post(
-        "/api/conversion-runs",
+        "/api/tools/bank-journal/conversion-runs",
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -167,7 +167,7 @@ def test_confirm_preview_row_after_manual_adjustment(client) -> None:
     ).json()
 
     run = client.post(
-        "/api/conversion-runs",
+        "/api/tools/bank-journal/conversion-runs",
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -221,7 +221,7 @@ def test_confirm_preview_row_after_manual_adjustment(client) -> None:
     row_id = run["preview_rows"][1]["id"]
 
     patch_response = client.patch(
-        f"/api/preview-rows/{row_id}",
+        f"/api/tools/bank-journal/preview-rows/{row_id}",
         json={
             "field_name": "科目",
             "new_value": "银行存款",
@@ -234,7 +234,7 @@ def test_confirm_preview_row_after_manual_adjustment(client) -> None:
     assert patch_response.json()["field_name"] == "科目"
 
     confirm_response = client.post(
-        f"/api/preview-rows/{row_id}/confirm",
+        f"/api/tools/bank-journal/preview-rows/{row_id}/confirm",
         json={"confirmed_by": "user-1", "comment": "已核对"},
     )
 
@@ -244,7 +244,7 @@ def test_confirm_preview_row_after_manual_adjustment(client) -> None:
 
 def test_list_bank_templates_returns_persisted_template(client) -> None:
     create = client.post(
-        "/api/bank-templates",
+        "/api/tools/bank-journal/bank-templates",
         json={
             "company_id": "company-1",
             "name": "中国银行 CSV",
@@ -265,14 +265,14 @@ def test_list_bank_templates_returns_persisted_template(client) -> None:
             },
         },
     ).json()
-    listed = client.get("/api/bank-templates").json()
+    listed = client.get("/api/tools/bank-journal/bank-templates").json()
     assert any(t["id"] == create["id"] for t in listed)
     assert listed[0]["latest_version"]["version_no"] == 1
 
 
 def test_creating_a_bank_template_records_an_audit_event(client) -> None:
     client.post(
-        "/api/bank-templates",
+        "/api/tools/bank-journal/bank-templates",
         json={
             "company_id": "company-1",
             "name": "中国银行 CSV",
@@ -310,7 +310,7 @@ def test_full_conversion_flow_end_to_end(client) -> None:
 
     # 2. Convert → conversion run + bank_transactions + journal_preview_rows persisted
     run = client.post(
-        "/api/conversion-runs",
+        "/api/tools/bank-journal/conversion-runs",
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -355,7 +355,7 @@ def test_full_conversion_flow_end_to_end(client) -> None:
 
     # 3. Manual adjustment → ManualAdjustment persisted, output_values updated
     patch = client.patch(
-        f"/api/preview-rows/{row_id}",
+        f"/api/tools/bank-journal/preview-rows/{row_id}",
         json={"field_name": "科目", "new_value": "管理费用",
               "reason": "人工指定采购科目", "adjusted_by": "user-1"},
     )
@@ -364,7 +364,7 @@ def test_full_conversion_flow_end_to_end(client) -> None:
 
     # 4. Confirm → Confirmation persisted, status → manually_confirmed
     confirm = client.post(
-        f"/api/preview-rows/{row_id}/confirm",
+        f"/api/tools/bank-journal/preview-rows/{row_id}/confirm",
         json={"confirmed_by": "user-1", "comment": "已核对"},
     )
     assert confirm.status_code == 200
@@ -372,7 +372,7 @@ def test_full_conversion_flow_end_to_end(client) -> None:
 
     # 5. Export → Export persisted, file written
     export = client.post(
-        f"/api/conversion-runs/{run_payload['id']}/exports",
+        f"/api/tools/bank-journal/conversion-runs/{run_payload['id']}/exports",
         json={
             "file_type": "csv",
             "columns": ["日期", "摘要", "科目", "金额"],
@@ -383,7 +383,7 @@ def test_full_conversion_flow_end_to_end(client) -> None:
     )
     assert export.status_code == 200
     download_url = export.json()["download_url"]
-    assert download_url.startswith("/api/exports/")
+    assert download_url.startswith("/api/tools/bank-journal/exports/")
 
     # 6. Download → FileResponse with CSV content
     download = client.get(download_url)

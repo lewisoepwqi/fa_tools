@@ -1,8 +1,8 @@
 from decimal import Decimal
 
-from app.core.enums import ExceptionCode, TransactionDirection
-from app.schemas.standard import StandardBankTransaction
-from app.services.rule_service import apply_rules
+from app.tools.bank_journal.enums import ExceptionCode, TransactionDirection
+from app.tools.bank_journal.schemas.standard import StandardBankTransaction
+from app.tools.bank_journal.services.rule_service import apply_rules
 
 
 def _transaction() -> StandardBankTransaction:

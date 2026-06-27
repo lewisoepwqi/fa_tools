@@ -4,7 +4,7 @@
 - POST /{id}/versions 创建新版本（version_no 递增，旧版本不变）
 - GET  /{id}/versions 版本历史
 - PATCH /{id}/status 停用/启用
-- POST /api/rules/reorder 批量调整优先级
+- POST /api/tools/bank-journal/rules/reorder 批量调整优先级
 - 审计记录 modified / disabled / enabled / priority_changed
 """
 
@@ -16,7 +16,7 @@
 
 def _create_bank_template(client) -> dict:
     return client.post(
-        "/api/bank-templates",
+        "/api/tools/bank-journal/bank-templates",
         json={
             "company_id": "company-1",
             "name": "中国银行 CSV",
@@ -42,7 +42,7 @@ def test_create_bank_template_new_version_increments_version_no(client) -> None:
     assert created["latest_version"]["version_no"] == 1
 
     response = client.post(
-        f"/api/bank-templates/{created['id']}/versions",
+        f"/api/tools/bank-journal/bank-templates/{created['id']}/versions",
         json={
             "file_type": "csv",
             "header_row_index": 0,
@@ -62,7 +62,7 @@ def test_create_bank_template_new_version_increments_version_no(client) -> None:
 def test_bank_template_version_history(client) -> None:
     created = _create_bank_template(client)
     client.post(
-        f"/api/bank-templates/{created['id']}/versions",
+        f"/api/tools/bank-journal/bank-templates/{created['id']}/versions",
         json={
             "file_type": "csv",
             "amount_mode": "income_expense_columns",
@@ -70,7 +70,7 @@ def test_bank_template_version_history(client) -> None:
         },
     )
 
-    response = client.get(f"/api/bank-templates/{created['id']}/versions")
+    response = client.get(f"/api/tools/bank-journal/bank-templates/{created['id']}/versions")
 
     assert response.status_code == 200
     versions = response.json()
@@ -83,13 +83,15 @@ def test_bank_template_disable_and_enable(client) -> None:
     created = _create_bank_template(client)
 
     disabled = client.patch(
-        f"/api/bank-templates/{created['id']}/status", params={"status": "inactive"}
+        f"/api/tools/bank-journal/bank-templates/{created['id']}/status",
+        params={"status": "inactive"},
     )
     assert disabled.status_code == 200
     assert disabled.json()["status"] == "inactive"
 
     enabled = client.patch(
-        f"/api/bank-templates/{created['id']}/status", params={"status": "active"}
+        f"/api/tools/bank-journal/bank-templates/{created['id']}/status",
+        params={"status": "active"},
     )
     assert enabled.json()["status"] == "active"
 
@@ -97,7 +99,8 @@ def test_bank_template_disable_and_enable(client) -> None:
 def test_bank_template_invalid_status_returns_422(client) -> None:
     created = _create_bank_template(client)
     response = client.patch(
-        f"/api/bank-templates/{created['id']}/status", params={"status": "deleted"}
+        f"/api/tools/bank-journal/bank-templates/{created['id']}/status",
+        params={"status": "deleted"},
     )
     assert response.status_code == 422
 
@@ -105,7 +108,7 @@ def test_bank_template_invalid_status_returns_422(client) -> None:
 def test_bank_template_version_records_audit(client) -> None:
     created = _create_bank_template(client)
     client.post(
-        f"/api/bank-templates/{created['id']}/versions",
+        f"/api/tools/bank-journal/bank-templates/{created['id']}/versions",
         json={"file_type": "csv", "amount_mode": "income_expense_columns", "created_by": "user-1"},
     )
     logs = client.get("/api/audit-logs").json()
@@ -119,7 +122,7 @@ def test_bank_template_version_records_audit(client) -> None:
 
 def _create_journal_template(client) -> dict:
     return client.post(
-        "/api/journal-templates",
+        "/api/tools/bank-journal/journal-templates",
         json={
             "company_id": "company-1",
             "name": "标准日记账",
@@ -137,7 +140,7 @@ def test_journal_template_new_version_and_history(client) -> None:
     created = _create_journal_template(client)
 
     response = client.post(
-        f"/api/journal-templates/{created['id']}/versions",
+        f"/api/tools/bank-journal/journal-templates/{created['id']}/versions",
         json={
             "file_type": "xlsx",
             "columns_json": ["日期", "摘要", "科目"],
@@ -147,14 +150,17 @@ def test_journal_template_new_version_and_history(client) -> None:
     )
     assert response.json()["latest_version"]["version_no"] == 2
 
-    history = client.get(f"/api/journal-templates/{created['id']}/versions").json()
+    history = client.get(
+        f"/api/tools/bank-journal/journal-templates/{created['id']}/versions"
+    ).json()
     assert len(history) == 2
 
 
 def test_journal_template_disable(client) -> None:
     created = _create_journal_template(client)
     response = client.patch(
-        f"/api/journal-templates/{created['id']}/status", params={"status": "inactive"}
+        f"/api/tools/bank-journal/journal-templates/{created['id']}/status",
+        params={"status": "inactive"},
     )
     assert response.json()["status"] == "inactive"
 
@@ -166,7 +172,7 @@ def test_journal_template_disable(client) -> None:
 
 def _create_mapping_profile(client) -> dict:
     return client.post(
-        "/api/mapping-profiles",
+        "/api/tools/bank-journal/mapping-profiles",
         json={
             "company_id": "company-1",
             "name": "默认映射",
@@ -179,7 +185,7 @@ def test_mapping_profile_new_version_and_history(client) -> None:
     created = _create_mapping_profile(client)
 
     response = client.post(
-        f"/api/mapping-profiles/{created['id']}/versions",
+        f"/api/tools/bank-journal/mapping-profiles/{created['id']}/versions",
         json={
             "mappings_json": {"日期": "transaction_date", "摘要": "summary"},
             "created_by": "user-1",
@@ -187,14 +193,17 @@ def test_mapping_profile_new_version_and_history(client) -> None:
     )
     assert response.json()["latest_version"]["version_no"] == 2
 
-    history = client.get(f"/api/mapping-profiles/{created['id']}/versions").json()
+    history = client.get(
+        f"/api/tools/bank-journal/mapping-profiles/{created['id']}/versions"
+    ).json()
     assert len(history) == 2
 
 
 def test_mapping_profile_disable(client) -> None:
     created = _create_mapping_profile(client)
     response = client.patch(
-        f"/api/mapping-profiles/{created['id']}/status", params={"status": "inactive"}
+        f"/api/tools/bank-journal/mapping-profiles/{created['id']}/status",
+        params={"status": "inactive"},
     )
     assert response.json()["status"] == "inactive"
 
@@ -206,7 +215,7 @@ def test_mapping_profile_disable(client) -> None:
 
 def _create_rule(client, name: str = "货款规则", priority: int = 10) -> dict:
     return client.post(
-        "/api/rules",
+        "/api/tools/bank-journal/rules",
         json={
             "company_id": "company-1",
             "name": name,
@@ -226,7 +235,7 @@ def test_rule_new_version_and_history(client) -> None:
     created = _create_rule(client)
 
     response = client.post(
-        f"/api/rules/{created['id']}/versions",
+        f"/api/tools/bank-journal/rules/{created['id']}/versions",
         json={
             "priority": 10,
             "conditions_json": {"all": [{"field": "summary", "op": "contains", "value": "采购"}]},
@@ -236,13 +245,16 @@ def test_rule_new_version_and_history(client) -> None:
     )
     assert response.json()["latest_version"]["version_no"] == 2
 
-    history = client.get(f"/api/rules/{created['id']}/versions").json()
+    history = client.get(f"/api/tools/bank-journal/rules/{created['id']}/versions").json()
     assert len(history) == 2
 
 
 def test_rule_disable(client) -> None:
     created = _create_rule(client)
-    response = client.patch(f"/api/rules/{created['id']}/status", params={"status": "inactive"})
+    response = client.patch(
+        f"/api/tools/bank-journal/rules/{created['id']}/status",
+        params={"status": "inactive"},
+    )
     assert response.json()["status"] == "inactive"
 
 
@@ -251,7 +263,7 @@ def test_rule_reorder_creates_new_priorities(client) -> None:
     rule_b = _create_rule(client, name="规则B", priority=20)
 
     response = client.post(
-        "/api/rules/reorder",
+        "/api/tools/bank-journal/rules/reorder",
         json={
             "items": [
                 {"rule_id": rule_a["id"], "priority": 5},
@@ -265,8 +277,8 @@ def test_rule_reorder_creates_new_priorities(client) -> None:
     assert len(updated) == 2
 
     # 验证新版本 priority 生效
-    latest_a = client.get(f"/api/rules/{rule_a['id']}").json()
-    latest_b = client.get(f"/api/rules/{rule_b['id']}").json()
+    latest_a = client.get(f"/api/tools/bank-journal/rules/{rule_a['id']}").json()
+    latest_b = client.get(f"/api/tools/bank-journal/rules/{rule_b['id']}").json()
     assert latest_a["latest_version"]["priority"] == 5
     assert latest_b["latest_version"]["priority"] == 1
 
@@ -277,7 +289,7 @@ def test_rule_reorder_creates_new_priorities(client) -> None:
 
 def test_rule_reorder_404_for_unknown_rule(client) -> None:
     response = client.post(
-        "/api/rules/reorder",
+        "/api/tools/bank-journal/rules/reorder",
         json={"items": [{"rule_id": "no-such-rule", "priority": 1}]},
     )
     assert response.status_code == 404

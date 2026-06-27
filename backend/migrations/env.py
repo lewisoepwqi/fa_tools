@@ -6,6 +6,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 import app.models  # noqa: F401
+import app.tools.bank_journal  # noqa: F401  触发工具模型注册到 Base.metadata
 from app.core.config import get_settings
 from app.db.base import Base
 

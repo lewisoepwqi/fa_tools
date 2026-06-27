@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from app.core.enums import AmountMode, ExceptionCode, TransactionDirection
-from app.schemas.standard import StandardBankTransaction
-from app.services.parser_service import (
+from app.tools.bank_journal.enums import AmountMode, ExceptionCode, TransactionDirection
+from app.tools.bank_journal.schemas.standard import StandardBankTransaction
+from app.tools.bank_journal.services.parser_service import (
     BankTemplateParseConfig,
     detect_bank_template_config,
     detect_header_row,

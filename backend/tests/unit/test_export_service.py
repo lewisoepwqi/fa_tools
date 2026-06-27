@@ -2,7 +2,10 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from app.services.export_service import export_preview_rows_to_csv, export_preview_rows_to_xlsx
+from app.tools.bank_journal.services.export_service import (
+    export_preview_rows_to_csv,
+    export_preview_rows_to_xlsx,
+)
 
 
 def test_export_preview_rows_to_csv(tmp_path: Path) -> None:

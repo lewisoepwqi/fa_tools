@@ -96,6 +96,24 @@ Worker
   +--> Object Storage
 ```
 
+### 3.1 工具化隔离（实现位置）
+
+本工具是 fa_tools 工具包中的一个独立模块，物理上与平台共享层隔离：
+
+**后端 `backend/app/tools/bank_journal/`：**
+- `models/ services/ schemas/ routes/` 全部为本工具专属。
+- 工具根 `__init__.py` 暴露 `register(app)`，由 `app/main.py` 调用挂载路由。
+- 工具模型在 `models/__init__.py` 顶部导入即注册到 `Base.metadata`，`migrations/env.py` 通过 `import app.tools.bank_journal` 触发。
+- 平台共享层（`models/` 下的 user/company/audit/file、`services/audit_service`+`file_service`、`api/routes/files`+`audit`、`core`、`db`）保留在 `app/` 根。
+- 工具路由前缀统一 `/api/tools/bank-journal/...`；表名/Alembic 迁移不变。
+
+**前端 `frontend/src/tools/bank_journal/`：**
+- `pages/ components/ types/ api/ routes.tsx index.ts` 全部为本工具专属。
+- `index.ts` 导出 `Tool` 描述符，加入 `src/tools/registry.ts`，AppShell 菜单与 App 路由据此动态生成。
+- 平台共享层（`App.tsx`、`api/client.ts`、`api/files.ts`、`components/AppShell.tsx`、`pages/AuditLogPage.tsx`）保留在 `src/` 根。
+
+下方 §4 描述的是本工具内部的逻辑模块边界。
+
 ## 4. 模块边界
 
 ### 4.1 File Service
