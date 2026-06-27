@@ -1,5 +1,5 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Modal, Table, Typography, message } from 'antd';
+import { Button, Modal, Table, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -99,10 +99,9 @@ export function BankTemplatePage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          银行流水模板
-        </Typography.Title>
+      <div className="toolbar" style={{ marginBottom: 16 }}>
+        <h2 className="section-title">银行流水模板</h2>
+        <div className="toolbar-spacer" />
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setWizardOpen(true)}>
           新建
         </Button>

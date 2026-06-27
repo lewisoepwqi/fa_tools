@@ -7,5 +7,5 @@ const EXCEPTION_LABELS: Record<string, string> = {
 };
 
 export function ExceptionTag({ code }: { code: string }) {
-  return <Tag color="red">{EXCEPTION_LABELS[code] ?? code}</Tag>;
+  return <Tag color="#b5141d">{EXCEPTION_LABELS[code] ?? code}</Tag>;
 }

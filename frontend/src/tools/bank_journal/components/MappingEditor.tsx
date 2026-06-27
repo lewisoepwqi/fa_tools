@@ -57,7 +57,7 @@ export function MappingEditor({ value, onChange, targetOptions }: MappingEditorP
               onChange={(e) => update(i, { target: e.target.value })}
             />
           )}
-          <Input style={{ width: '8%', textAlign: 'center', backgroundColor: '#fafafa' }} value=" ← " disabled />
+          <Input className="sep-fill" style={{ width: '8%' }} value=" ← " disabled />
           <Select
             style={{ width: '37%' }}
             value={entry.source || undefined}

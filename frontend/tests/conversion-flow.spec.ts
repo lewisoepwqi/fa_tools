@@ -2,8 +2,9 @@ import { expect, test } from '@playwright/test';
 
 test('shows bank statement journal workspace', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByText('流水转日记账')).toBeVisible();
-  await expect(page.getByText('流水上传').first()).toBeVisible();
+  // 品牌字标可见 + 工作台入口（流水上传子菜单项）可见
+  await expect(page.getByText('FA·Tools')).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: '流水上传' })).toBeVisible();
 });
 
 test('template management pages render with create button', async ({ page }) => {
@@ -62,5 +63,21 @@ test('journal template editor shows column management instead of JSON', async ({
   await expect(page.getByText(/共 4 列，其中必填 3 列/)).toBeVisible();
   // 不应再有 JSON 数组提示
   await expect(page.getByText(/列定义（JSON 数组）/)).toHaveCount(0);
+});
+
+test('design system applies brand palette and typography', async ({ page }) => {
+  // 设计系统生效：主色按钮应用品牌红 #b5141d，标题区有红色强调条
+  await page.goto('/bank-journal/templates/bank');
+  const createBtn = page.getByRole('button', { name: '新建' });
+  await expect(createBtn).toBeVisible();
+  // 品牌红主色（allow 小数 rgb 容差）
+  const bg = await createBtn.evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(bg).toMatch(/rgb\(181,\s*20,\s*29\)|#b5141d/i);
+
+  // section-title 的红色强调条（::before 伪元素 width 3px）
+  const titleBeforeWidth = await page.locator('.section-title').first().evaluate((el) => {
+    return getComputedStyle(el, '::before').width;
+  });
+  expect(titleBeforeWidth).toBe('3px');
 });
 

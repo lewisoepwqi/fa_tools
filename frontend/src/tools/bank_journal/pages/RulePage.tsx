@@ -127,10 +127,9 @@ export function RulePage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          规则
-        </Typography.Title>
+      <div className="toolbar" style={{ marginBottom: 16 }}>
+        <h2 className="section-title">规则</h2>
+        <div className="toolbar-spacer" />
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
           新建
         </Button>

@@ -39,9 +39,11 @@ export function UploadPage() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card className="work-card">
-        <Typography.Title level={3}>流水上传</Typography.Title>
-        <Typography.Paragraph type="secondary">
-          上传银行流水 CSV / XLSX 文件，生成公司日记账预览。
+        <div style={{ marginBottom: 16 }}>
+          <h2 className="section-title">流水上传</h2>
+        </div>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 20 }}>
+          上传银行流水 CSV / XLSX 文件，系统将自动按模板解析并生成公司日记账预览，供你确认与导出。
         </Typography.Paragraph>
         <Upload.Dragger
           multiple
@@ -56,17 +58,23 @@ export function UploadPage() {
           <p className="ant-upload-text">点击或拖拽文件到此处上传</p>
           <p className="ant-upload-hint">支持 .csv / .xlsx，可多选</p>
         </Upload.Dragger>
-        <Button
-          type="primary"
-          loading={loading}
-          disabled={fileList.length === 0}
-          onClick={handleStart}
-          style={{ marginTop: 16 }}
-        >
-          开始转换
-        </Button>
+        <div className="toolbar" style={{ marginTop: 20 }}>
+          <div className="toolbar-spacer" />
+          <Button
+            type="primary"
+            loading={loading}
+            disabled={fileList.length === 0}
+            onClick={handleStart}
+          >
+            开始转换
+          </Button>
+        </div>
       </Card>
-      {run && <ConversionRunDetailPage run={run} />}
+      {run && (
+        <Card className="work-card" title={<span className="section-title">转换结果</span>}>
+          <ConversionRunDetailPage run={run} />
+        </Card>
+      )}
     </Space>
   );
 }

@@ -2,10 +2,12 @@ import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
 import {
   Button,
   Card,
+  Col,
   Descriptions,
   Form,
   Input,
   Modal,
+  Row,
   Select,
   Space,
   Spin,
@@ -203,7 +205,13 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
   };
 
   const columns: ColumnsType<PreviewRow> = [
-    { title: '行号', dataIndex: 'row_index', key: 'row_index', width: 64 },
+    {
+      title: '行号',
+      dataIndex: 'row_index',
+      key: 'row_index',
+      width: 64,
+      render: (v) => <span className="num num-right">{renderValue(v)}</span>
+    },
     {
       title: '日期',
       key: '日期',
@@ -222,7 +230,10 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
     {
       title: '金额',
       key: '金额',
-      render: (_, record) => renderValue(record.output_values['金额'])
+      align: 'right',
+      render: (_, record) => (
+        <span className="num num-right">{renderValue(record.output_values['金额'])}</span>
+      )
     },
     {
       title: '状态',
@@ -294,17 +305,16 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {/* 第一段：页头 + 概览 */}
       <Card className="work-card">
-        <Space style={{ marginBottom: 16 }}>
+        <div className="toolbar" style={{ marginBottom: 16 }}>
           {!runProp && (
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/bank-journal/runs')}>
               返回
             </Button>
           )}
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            批次详情 · {run.id}
-          </Typography.Title>
-        </Space>
+          <h2 className="section-title">批次详情 · {run.id}</h2>
+        </div>
         <Descriptions size="small" column={2} bordered>
           <Descriptions.Item label="公司">{run.company_id ?? '-'}</Descriptions.Item>
           <Descriptions.Item label="银行账号">{run.bank_account_id ?? '-'}</Descriptions.Item>
@@ -314,23 +324,46 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
           <Descriptions.Item label="创建时间">
             {run.created_at ? new Date(run.created_at).toLocaleString() : '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="总行数">{stats.total}</Descriptions.Item>
-          <Descriptions.Item label="汇总">
-            自动确认 {stats.auto} · 待确认 {stats.needs} · 冲突 {stats.conflict}
-            {stats.parseFailed > 0 ? ` · 解析失败 ${stats.parseFailed}` : ''}
-          </Descriptions.Item>
         </Descriptions>
       </Card>
 
+      {/* 第二段：统计数字卡片（关键数据点睛） */}
+      <Row gutter={16}>
+        <Col span={6}>
+          <Card className="work-card">
+            <div className="stat-value num">{stats.total}</div>
+            <div className="stat-label">总行数</div>
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card className="work-card">
+            <div className="stat-value num">{stats.auto}</div>
+            <div className="stat-label">已自动确认</div>
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card className="work-card">
+            <div className="stat-value num is-accent">{stats.needs}</div>
+            <div className="stat-label">待确认</div>
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card className="work-card">
+            <div className="stat-value num">{stats.conflict + stats.parseFailed}</div>
+            <div className="stat-label">冲突 / 解析失败</div>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* 第三段：预览工作台 */}
       <Card className="work-card">
-        <Space style={{ marginBottom: 16, flexWrap: 'wrap' }}>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            转换结果 · 共 {run.summary.total_rows} 行
-          </Typography.Title>
+        <div className="toolbar" style={{ marginBottom: 16 }}>
+          <h3 className="section-title">转换结果 · 共 {run.summary.total_rows} 行</h3>
+          <div className="toolbar-spacer" />
           <Select
             allowClear
             placeholder="按状态筛选"
-            style={{ width: 160 }}
+            style={{ width: 150 }}
             value={statusFilter}
             onChange={setStatusFilter}
             options={[
@@ -345,7 +378,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
             <Select
               allowClear
               placeholder="按异常筛选"
-              style={{ width: 220 }}
+              style={{ width: 210 }}
               value={exceptionFilter}
               onChange={setExceptionFilter}
               options={exceptionOptions.map((c) => ({ value: c, label: c }))}
@@ -358,13 +391,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
           >
             批量确认（{selectedRowKeys.length}）
           </Button>
-          <Button loading={acting} onClick={() => handleExport(false)}>
-            导出全部
-          </Button>
-          <Button loading={acting} onClick={() => handleExport(true)}>
-            仅导出已确认
-          </Button>
-        </Space>
+        </div>
         <Table<PreviewRow>
           rowKey="row_index"
           columns={columns}
@@ -377,10 +404,20 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
             getCheckboxProps: (r) => ({ disabled: !r.id || r.status === 'parse_failed' })
           }}
         />
+        <div className="toolbar" style={{ marginTop: 16 }}>
+          <div className="toolbar-spacer" />
+          <Button loading={acting} onClick={() => handleExport(true)}>
+            仅导出已确认
+          </Button>
+          <Button type="primary" loading={acting} onClick={() => handleExport(false)}>
+            导出全部
+          </Button>
+        </div>
         {filteredRows.length === 0 && (
-          <Typography.Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
-            当前筛选条件下无数据。
-          </Typography.Text>
+          <div className="empty-teach" style={{ marginTop: 12 }}>
+            <strong>当前筛选条件下无数据</strong>
+            清除筛选条件以查看全部转换结果
+          </div>
         )}
       </Card>
 
@@ -406,7 +443,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
             <Input.TextArea rows={2} />
           </Form.Item>
           {editingRow?.status !== 'manually_confirmed' && (
-            <Tag color="orange">提示：修改后该行仍需确认才会变为已确认状态</Tag>
+            <Tag color="#cc4f58">提示：修改后该行仍需确认才会变为已确认状态</Tag>
           )}
         </Form>
       </Modal>

@@ -161,13 +161,12 @@ export function JournalTemplateDetailPage() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card className="work-card">
-        <Space style={{ marginBottom: 16 }}>
+        <div className="toolbar" style={{ marginBottom: 16 }}>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/bank-journal/templates/journal')}>
             返回
           </Button>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {data.name}
-          </Typography.Title>
+          <h2 className="section-title">{data.name}</h2>
+          <div className="toolbar-spacer" />
           <Button icon={<EditOutlined />} onClick={openEdit}>
             编辑（新版本）
           </Button>
@@ -175,7 +174,7 @@ export function JournalTemplateDetailPage() {
           <Button onClick={handleToggleStatus}>
             {data.status === 'active' ? '停用' : '启用'}
           </Button>
-        </Space>
+        </div>
         <Descriptions size="small" column={2} bordered>
           <Descriptions.Item label="模板ID">{data.id}</Descriptions.Item>
           <Descriptions.Item label="公司">{data.company_id}</Descriptions.Item>

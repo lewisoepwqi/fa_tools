@@ -114,10 +114,9 @@ export function JournalTemplatePage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          日记账模板
-        </Typography.Title>
+      <div className="toolbar" style={{ marginBottom: 16 }}>
+        <h2 className="section-title">日记账模板</h2>
+        <div className="toolbar-spacer" />
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
           新建
         </Button>

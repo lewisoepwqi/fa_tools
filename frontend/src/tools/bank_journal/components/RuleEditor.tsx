@@ -197,7 +197,8 @@ function ActionRow({
         onChange={(field) => onChange({ field })}
       />
       <Input
-        style={{ width: '12%', textAlign: 'center', backgroundColor: '#fafafa' }}
+        className="sep-fill"
+        style={{ width: '12%' }}
         value=" = "
         disabled
       />

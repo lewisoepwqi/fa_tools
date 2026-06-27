@@ -1,3 +1,50 @@
+/**
+ * FA Tools 全局样式 — 集团配色（tokens.css）+ frontend-design 现代手法。
+ * 配色/字体 token 与 theme.ts 同源；此处暴露为 CSS 变量供自定义元素与内联场景使用。
+ */
+
+/* ── 楷体：标题点睛（中文品牌字标/页面主标题）────────────────────────────── */
+@font-face {
+  font-family: 'KaiTi';
+  src: url('/fonts/simkai.ttf') format('truetype');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* 品牌红 */
+  --fa-red: #b5141d;
+  --fa-red-mid: #cc4f58;
+  --fa-red-light: #f4ced0;
+  --fa-red-dark: #8a1419;
+  /* 品牌蓝（结构色） */
+  --fa-blue: #133f8e;
+  --fa-blue-mid: #5574ac;
+  --fa-blue-pale: #e8eff8;
+  --fa-blue-dark: #0d2e68;
+  /* 暖中性 */
+  --fa-ink: #1d1b1b;
+  --fa-ink-dark: #24201f;
+  --fa-muted: #6f6864;
+  --fa-rule: #d8d0ca;
+  --fa-fill: #e9e7e6;
+  --fa-paper: #f5f2ee;
+  --fa-white: #ffffff;
+
+  /* 字体 */
+  --fa-font-zh: 'KaiTi', 'STKaiti', serif; /* 仅标题装饰 */
+  --fa-font-ui: 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', Lato, sans-serif;
+  --fa-font-num: Lato, 'Microsoft YaHei', sans-serif;
+
+  /* 间距节奏 */
+  --fa-space-2: 8px;
+  --fa-space-3: 12px;
+  --fa-space-4: 16px;
+  --fa-space-5: 24px;
+  --fa-space-6: 32px;
+}
+
 html,
 body,
 #root {
@@ -6,30 +53,182 @@ body,
   margin: 0;
 }
 
+body {
+  font-family: var(--fa-font-ui);
+  color: var(--fa-ink);
+  background: var(--fa-paper);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── AppShell ─────────────────────────────────────────────────────────── */
 .app-shell {
   min-height: 100vh;
 }
 
 .app-sider {
-  background: #182230;
+  background: var(--fa-ink-dark) !important;
+  /* 极淡的品牌红渐变，体现集团红基调而不喧宾夺主 */
+  background-image: linear-gradient(180deg, #2a1f20 0%, var(--fa-ink-dark) 40%);
+  border-right: 1px solid rgba(0, 0, 0, 0.2);
 }
 
-.app-title {
-  color: #fff !important;
-  margin: 20px 20px 16px !important;
+.app-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid rgba(245, 242, 238, 0.08);
+}
+.app-brand-mark {
+  font-family: var(--fa-font-zh);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--fa-white);
+  letter-spacing: 0.04em;
+}
+.app-brand-mark .accent {
+  color: var(--fa-red-mid);
+}
+.app-brand-sub {
+  font-size: 11px;
+  color: rgba(245, 242, 238, 0.5);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .app-header {
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--fa-white);
+  border-bottom: 1px solid var(--fa-rule);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
   font-weight: 600;
+}
+.app-header-bread {
+  font-size: 15px;
+  color: var(--fa-ink);
+}
+.app-header-bread .sep {
+  color: var(--fa-rule);
+  margin: 0 8px;
+}
+.app-header-bread .crumb-muted {
+  color: var(--fa-muted);
+  font-weight: 400;
 }
 
 .app-content {
-  padding: 24px;
-  background: #f6f7f9;
+  padding: var(--fa-space-5);
+  background: var(--fa-paper);
 }
 
+/* ── 区块标题 + 左侧红色强调条（核心视觉记忆点）────────────────────────── */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fa-ink);
+  margin: 0;
+}
+.section-title::before {
+  content: '';
+  width: 3px;
+  height: 18px;
+  background: var(--fa-red);
+  border-radius: 1px;
+}
+
+/* 页面主标题（楷体点睛） */
+.page-title {
+  font-family: var(--fa-font-zh);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--fa-ink);
+  margin: 0;
+  line-height: 1.2;
+}
+
+/* ── 数字 utility（金融界面：金额/编号右对齐 + tabular-nums）────────────── */
+.num {
+  font-family: var(--fa-font-num);
+  font-feature-settings: 'tnum' 1;
+  font-variant-numeric: tabular-nums;
+}
+.num-right {
+  text-align: right;
+}
+.num-strong {
+  font-weight: 700;
+  color: var(--fa-red);
+}
+
+/* 统计卡片：关键数字点睛 */
+.stat-value {
+  font-family: var(--fa-font-num);
+  font-feature-settings: 'tnum' 1;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--fa-ink);
+}
+.stat-value.is-accent {
+  color: var(--fa-red);
+}
+.stat-label {
+  font-size: 12px;
+  color: var(--fa-muted);
+  letter-spacing: 0.04em;
+  margin-top: 6px;
+}
+
+/* 卡片：克制阴影、暖边框 */
 .work-card {
-  border-radius: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--fa-rule);
+  box-shadow: 0 1px 2px rgba(45, 31, 25, 0.04);
+}
+
+/* 工具栏分组（筛选与操作分行，建立层次） */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--fa-space-3);
+  flex-wrap: wrap;
+}
+.toolbar-spacer {
+  flex: 1;
+}
+
+/* 识别成功标记（绿色对勾） */
+.ok-mark {
+  color: #2e7d32;
+}
+/* 映射/规则分隔符背景（暖中性） */
+.sep-fill {
+  background: var(--fa-fill);
+  text-align: center;
+}
+
+/* 空状态教学区（frontend-design: empty states that teach） */
+.empty-teach {
+  text-align: center;
+  padding: var(--fa-space-6) var(--fa-space-4);
+  color: var(--fa-muted);
+}
+.empty-teach strong {
+  color: var(--fa-ink);
+  display: block;
+  margin-bottom: 6px;
+  font-size: 15px;
+}
+
+/* 减少动效偏好（无障碍） */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

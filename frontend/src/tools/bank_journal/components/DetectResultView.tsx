@@ -54,7 +54,7 @@ export function DetectResultView({ config }: { config: BankTemplateConfigView })
         {aliasEntries.length > 0 ? (
           <Space wrap size={[8, 8]}>
             {aliasEntries.map(([col, field]) => (
-              <Tag key={col} icon={<CheckCircleFilled style={{ color: '#52c41a' }} />}>
+              <Tag key={col} icon={<CheckCircleFilled className="ok-mark" />}>
                 {col} → {FIELD_LABEL[String(field)] ?? String(field)}
               </Tag>
             ))}
