@@ -212,6 +212,9 @@ cd backend && alembic upgrade head
 
 ## 11. 已知后续项 / 技术债务
 
+> **完整的 PRD 合规缺口（含本节之外的"真缺口"）见 [`gap-analysis.md`](./gap-analysis.md)**。
+> 该文档按 P0/P1/P2 分级、附 PRD 依据与代码证据，并区分"验收清单标 [x] 但实际未满足"与"主动推迟的非 MVP 项"。
+
 记录在 `docs/mvp-acceptance-checklist.md`，均为**非 MVP**：
 
 - **PostgreSQL 实测**：当前无 Docker，测试全在 SQLite。生产前需 `docker compose up -d postgres && alembic upgrade head` 验证迁移在 PG 上无误（注意：模型用通用 `JSON`，PG 会建为 `JSON` 而非 `JSONB`；如需 JSONB 索引/查询性能需后续调整）。

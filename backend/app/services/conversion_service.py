@@ -19,13 +19,14 @@ from app.models.conversion import (
 from app.models.file import SourceFile
 from app.schemas.conversion import (
     ConversionRunCreate,
+    ConversionRunListItemResponse,
     ConversionRunResponse,
     ConversionRunSummary,
     JournalPreviewRowData,
 )
 from app.schemas.standard import StandardBankTransaction
 from app.services.mapping_service import apply_mappings
-from app.services.parser_service import BankTemplateParseConfig, parse_bank_statement
+from app.services.parser_service import BankTemplateParseConfig, parse_bank_rows
 from app.services.rule_service import apply_rules
 
 
@@ -82,6 +83,9 @@ def run_conversion(
         status="completed",
         completed_at=datetime.now(UTC),
         summary_json={},
+        bank_template_version_id=payload.bank_template_version_id,
+        company_journal_template_version_id=payload.company_journal_template_version_id,
+        mapping_profile_version_id=payload.mapping_profile_version_id,
     )
     db.add(run)
 
@@ -99,6 +103,7 @@ def run_conversion(
 
     preview_rows: list[JournalPreviewRowData] = []
     row_index = 1
+    parse_failed_count = 0
     for source_file_id in payload.source_file_ids:
         source = db.query(SourceFile).filter(SourceFile.id == source_file_id).first()
         if source is None:
@@ -120,7 +125,7 @@ def run_conversion(
             amount_config=config.amount_config,
             date_formats=config.date_formats,
         )
-        transactions = parse_bank_statement(file_path, parse_config)
+        parsed_rows = parse_bank_rows(file_path, parse_config)
 
         db.add(
             ConversionRunFile(
@@ -128,11 +133,54 @@ def run_conversion(
                 conversion_run_id=run.id,
                 source_file_id=source_file_id,
                 status="parsed",
-                row_count=len(transactions),
+                row_count=len(parsed_rows),
             )
         )
 
-        for transaction in transactions:
+        for parsed in parsed_rows:
+            if parsed.transaction is None:
+                # P1-1: 解析失败行——不构造 bank_transaction（无标准化数据），
+                # 直接产出 PARSE_FAILED 预览行，保留原始行快照供人工修正。
+                preview_id = str(uuid4())
+                exception_codes = list(parsed.parse_errors)
+                db.add(
+                    JournalPreviewRow(
+                        id=preview_id,
+                        conversion_run_id=run.id,
+                        bank_transaction_id=None,
+                        row_index=row_index,
+                        output_values_json={
+                            "_parse_error": parsed.error_message,
+                            "_source_row_index": parsed.source_row_index,
+                            "_source_sheet_name": parsed.source_sheet_name,
+                            "_raw_row": parsed.raw_row,
+                        },
+                        status=PreviewStatus.PARSE_FAILED,
+                        exception_codes_json=[code.value for code in exception_codes],
+                        matched_rule_versions_json=[],
+                        rule_trace_json=[],
+                    )
+                )
+                preview_rows.append(
+                    JournalPreviewRowData(
+                        id=preview_id,
+                        row_index=row_index,
+                        output_values={
+                            "_parse_error": parsed.error_message,
+                            "_source_row_index": parsed.source_row_index,
+                            "_source_sheet_name": parsed.source_sheet_name,
+                        },
+                        status=PreviewStatus.PARSE_FAILED,
+                        exception_codes=exception_codes,
+                        matched_rule_version_ids=[],
+                        rule_trace=[],
+                    )
+                )
+                parse_failed_count += 1
+                row_index += 1
+                continue
+
+            transaction = parsed.transaction
             bank_tx = _build_bank_transaction(run.id, transaction)
             db.add(bank_tx)
 
@@ -160,7 +208,10 @@ def run_conversion(
             preview_rows.append(preview.model_copy(update={"id": preview_id}))
             row_index += 1
 
-    run.summary_json = {"total_rows": len(preview_rows)}
+    run.summary_json = {
+        "total_rows": len(preview_rows),
+        "parse_failed_rows": parse_failed_count,
+    }
     db.commit()
 
     return ConversionRunResponse(
@@ -168,6 +219,13 @@ def run_conversion(
         status=run.status,
         summary=ConversionRunSummary(total_rows=len(preview_rows)),
         preview_rows=preview_rows,
+        company_id=run.company_id,
+        bank_account_id=run.bank_account_id,
+        created_at=run.created_at,
+        completed_at=run.completed_at,
+        bank_template_version_id=run.bank_template_version_id,
+        company_journal_template_version_id=run.company_journal_template_version_id,
+        mapping_profile_version_id=run.mapping_profile_version_id,
     )
 
 
@@ -196,4 +254,84 @@ def _build_bank_transaction(run_id: str, txn: StandardBankTransaction) -> BankTr
         bank_transaction_id=txn.bank_transaction_id,
         receipt_no=txn.receipt_no,
         raw_row_json=txn.raw_row,
+    )
+
+
+def _summary_from_json(raw: dict[str, object] | None) -> ConversionRunSummary:
+    return ConversionRunSummary(
+        total_rows=int(raw.get("total_rows", 0)) if raw else 0,
+        parse_failed_rows=int(raw.get("parse_failed_rows", 0)) if raw else 0,
+    )
+
+
+def list_conversion_runs(
+    db: Session, company_id: str | None = None
+) -> list[ConversionRunListItemResponse]:
+    """返回所有批次（不含预览行），按创建时间倒序。"""
+    query = db.query(ConversionRun)
+    if company_id is not None:
+        query = query.filter(ConversionRun.company_id == company_id)
+    runs = query.order_by(ConversionRun.created_at.desc()).all()
+    return [
+        ConversionRunListItemResponse(
+            id=run.id,
+            company_id=run.company_id,
+            bank_account_id=run.bank_account_id,
+            status=run.status,
+            summary=_summary_from_json(run.summary_json),
+            created_at=run.created_at,
+            completed_at=run.completed_at,
+            bank_template_version_id=run.bank_template_version_id,
+            company_journal_template_version_id=run.company_journal_template_version_id,
+            mapping_profile_version_id=run.mapping_profile_version_id,
+        )
+        for run in runs
+    ]
+
+
+def _preview_row_to_data(row: JournalPreviewRow) -> JournalPreviewRowData:
+    return JournalPreviewRowData(
+        id=row.id,
+        row_index=row.row_index,
+        output_values=row.output_values_json or {},
+        status=PreviewStatus(row.status),
+        exception_codes=[ExceptionCode(code) for code in (row.exception_codes_json or [])],
+        matched_rule_version_ids=row.matched_rule_versions_json or [],
+        rule_trace=_rule_trace_to_list(row.rule_trace_json),
+    )
+
+
+def _rule_trace_to_list(raw: object) -> list[dict[str, Any]]:
+    # 模型列 rule_trace_json 在 schema 里是 list[dict]；兼容历史 dict 写入。
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    return []
+
+
+def get_conversion_run(db: Session, run_id: str) -> ConversionRunResponse:
+    """按 id 加载批次详情（含预览行）。不存在则 404。"""
+    run = db.query(ConversionRun).filter(ConversionRun.id == run_id).first()
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversion run not found: {run_id}",
+        )
+    rows = (
+        db.query(JournalPreviewRow)
+        .filter(JournalPreviewRow.conversion_run_id == run_id)
+        .order_by(JournalPreviewRow.row_index.asc())
+        .all()
+    )
+    return ConversionRunResponse(
+        id=run.id,
+        status=run.status,
+        summary=_summary_from_json(run.summary_json),
+        preview_rows=[_preview_row_to_data(row) for row in rows],
+        company_id=run.company_id,
+        bank_account_id=run.bank_account_id,
+        created_at=run.created_at,
+        completed_at=run.completed_at,
+        bank_template_version_id=run.bank_template_version_id,
+        company_journal_template_version_id=run.company_journal_template_version_id,
+        mapping_profile_version_id=run.mapping_profile_version_id,
     )

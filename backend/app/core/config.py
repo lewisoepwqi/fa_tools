@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     secret_key: str = "development-secret"
     upload_dir: str = ".local/uploads"
     export_dir: str = ".local/exports"
+    # 允许的前端来源（逗号分隔）。开发默认放行 Vite dev server。
+    cors_origins: list[str] = ["http://localhost:5173"]
 
     model_config = SettingsConfigDict(env_file="../.env", env_file_encoding="utf-8")
 

@@ -9,6 +9,24 @@ from sqlalchemy.orm import Session
 from app.models.audit import AuditLog
 
 
+def _json_safe(value: Any) -> Any:
+    """递归把 datetime/date/Decimal 等转为 JSON 可序列化的字符串/基本类型。
+
+    SQLAlchemy 的 JSON 列无法直接序列化 datetime 等对象，审计快照里若
+    包含这些类型（如带时间戳的响应）会触发 StatementError。
+    """
+    if isinstance(value, (datetime,)):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    # Decimal、date、enum 等其他类型一律退化为字符串。
+    return str(value)
+
+
 def build_audit_event(
     company_id: str,
     actor_id: str,
@@ -26,8 +44,8 @@ def build_audit_event(
         "action": action,
         "entity_type": entity_type,
         "entity_id": entity_id,
-        "before_json": before,
-        "after_json": after,
+        "before_json": _json_safe(before),
+        "after_json": _json_safe(after),
         "ip_address": ip_address,
         "user_agent": user_agent,
         "created_at": datetime.now(UTC).isoformat(),

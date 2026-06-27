@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.core.enums import ExceptionCode
@@ -73,8 +74,46 @@ def _match_condition(values: dict[str, Any], condition: dict[str, Any]) -> bool:
         return any(item in str(actual or "") for item in expected)
     if op == "not_contains":
         return expected not in str(actual or "")
-    if op == "gte":
-        return Decimal(str(actual)) >= Decimal(str(expected))
-    if op == "lte":
-        return Decimal(str(actual)) <= Decimal(str(expected))
+    if op in ("gte", "lte"):
+        # 金额区间：缺失/不可解析字段视为不匹配，而非崩溃。
+        actual_dec = _decimal_or_none(actual)
+        expected_dec = _decimal_or_none(expected)
+        if actual_dec is None or expected_dec is None:
+            return False
+        return actual_dec >= expected_dec if op == "gte" else actual_dec <= expected_dec
+    if op in ("date_gte", "date_lte"):
+        # 日期范围：按 ISO 日期串比较，缺失/不可解析视为不匹配。
+        actual_date = _date_or_none(actual)
+        expected_date = _date_or_none(expected)
+        if actual_date is None or expected_date is None:
+            return False
+        return (
+            actual_date >= expected_date if op == "date_gte" else actual_date <= expected_date
+        )
     raise ValueError(f"Unsupported rule operator: {op}")
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, (int, float)):
+        return Decimal(str(value))
+    try:
+        return Decimal(str(value).replace(",", ""))
+    except InvalidOperation:
+        return None
+
+
+def _date_or_none(value: Any) -> date | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d").date()
+    except ValueError:
+        return None
