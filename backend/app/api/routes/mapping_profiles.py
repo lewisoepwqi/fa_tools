@@ -9,6 +9,7 @@ from app.schemas.mapping import (
     MappingProfileResponse,
     MappingProfileVersionResponse,
 )
+from app.services.audit_service import record_audit_event
 
 router = APIRouter(prefix="/api/mapping-profiles", tags=["mapping-profiles"])
 
@@ -40,7 +41,17 @@ def create_mapping_profile(
     db.commit()
     db.refresh(parent)
     db.refresh(version)
-    return _to_response(parent, version)
+    response = _to_response(parent, version)
+    record_audit_event(
+        db,
+        company_id=response.company_id,
+        actor_id=response.latest_version.created_by,
+        action="mapping_profile.created",
+        entity_type="mapping_profile",
+        entity_id=response.id,
+        after=response.model_dump(),
+    )
+    return response
 
 
 @router.get("", response_model=list[MappingProfileResponse])

@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.deps import DbSession
 from app.models.rule import Rule, RuleVersion
 from app.schemas.rule import RuleCreate, RuleResponse, RuleVersionResponse
+from app.services.audit_service import record_audit_event
 
 router = APIRouter(prefix="/api/rules", tags=["rules"])
 
@@ -35,7 +36,17 @@ def create_rule(db: DbSession, payload: RuleCreate) -> RuleResponse:
     db.commit()
     db.refresh(parent)
     db.refresh(version)
-    return _to_response(parent, version)
+    response = _to_response(parent, version)
+    record_audit_event(
+        db,
+        company_id=response.company_id,
+        actor_id=response.latest_version.created_by,
+        action="rule.created",
+        entity_type="rule",
+        entity_id=response.id,
+        after=response.model_dump(),
+    )
+    return response
 
 
 @router.get("", response_model=list[RuleResponse])

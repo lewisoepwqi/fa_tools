@@ -6,6 +6,7 @@ from app.schemas.template import (
     CompanyJournalTemplateResponse,
 )
 from app.services import template_service
+from app.services.audit_service import record_audit_event
 
 router = APIRouter(prefix="/api/journal-templates", tags=["journal-templates"])
 
@@ -14,7 +15,17 @@ router = APIRouter(prefix="/api/journal-templates", tags=["journal-templates"])
 def create_journal_template(
     db: DbSession, payload: CompanyJournalTemplateCreate
 ) -> CompanyJournalTemplateResponse:
-    return template_service.create_journal_template(db, payload)
+    response = template_service.create_journal_template(db, payload)
+    record_audit_event(
+        db,
+        company_id=response.company_id,
+        actor_id=response.latest_version.created_by,
+        action="journal_template.created",
+        entity_type="company_journal_template",
+        entity_id=response.id,
+        after=response.model_dump(),
+    )
+    return response
 
 
 @router.get("", response_model=list[CompanyJournalTemplateResponse])

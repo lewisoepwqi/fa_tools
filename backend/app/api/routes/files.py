@@ -3,6 +3,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from app.api.deps import DbSession
 from app.models.file import SourceFile
 from app.schemas.file import UploadedFileResponse
+from app.services.audit_service import record_audit_event
 from app.services.file_service import save_uploaded_file
 
 router = APIRouter(prefix="/api/files", tags=["files"])
@@ -38,4 +39,14 @@ async def upload_file(
     db.commit()
     db.refresh(source_file)
 
-    return UploadedFileResponse(company_id=company_id, uploaded_by=uploaded_by, **saved)
+    response = UploadedFileResponse(company_id=company_id, uploaded_by=uploaded_by, **saved)
+    record_audit_event(
+        db,
+        company_id=company_id,
+        actor_id=uploaded_by,
+        action="file.uploaded",
+        entity_type="source_file",
+        entity_id=source_file.id,
+        after=response.model_dump(),
+    )
+    return response

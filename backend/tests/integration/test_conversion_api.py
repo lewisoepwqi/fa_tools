@@ -251,3 +251,30 @@ def test_list_bank_templates_returns_persisted_template(client) -> None:
     listed = client.get("/api/bank-templates").json()
     assert any(t["id"] == create["id"] for t in listed)
     assert listed[0]["latest_version"]["version_no"] == 1
+
+
+def test_creating_a_bank_template_records_an_audit_event(client) -> None:
+    client.post(
+        "/api/bank-templates",
+        json={
+            "company_id": "company-1",
+            "name": "中国银行 CSV",
+            "bank_name": "中国银行",
+            "bank_account_id": "bank-account-1",
+            "version": {
+                "file_type": "csv",
+                "sheet_selector_json": {"mode": "first"},
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases_json": {"交易日期": "transaction_date"},
+                "date_formats_json": ["%Y-%m-%d"],
+                "amount_mode": "income_expense_columns",
+                "amount_config_json": {"income": "income_amount", "expense": "expense_amount"},
+                "unique_key_config_json": {"fields": ["流水号"]},
+                "sample_file_id": "file-1",
+                "created_by": "user-1",
+            },
+        },
+    )
+    logs = client.get("/api/audit-logs").json()
+    assert any(log["action"] == "bank_template.created" for log in logs)
