@@ -123,7 +123,7 @@ export function BankTemplatePage() {
         loading={loading}
         pagination={false}
         onRow={(record) => ({
-          onClick: () => navigate(`/templates/bank/${record.id}`),
+          onClick: () => navigate(`/bank-journal/templates/bank/${record.id}`),
           style: { cursor: 'pointer' }
         })}
       />

@@ -115,7 +115,7 @@ export function MappingProfilePage() {
         loading={loading}
         pagination={false}
         onRow={(record) => ({
-          onClick: () => navigate(`/templates/mapping/${record.id}`),
+          onClick: () => navigate(`/bank-journal/templates/mapping/${record.id}`),
           style: { cursor: 'pointer' }
         })}
       />

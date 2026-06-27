@@ -52,7 +52,7 @@ export function ConversionRunListPage() {
         dataSource={runs}
         loading={loading}
         pagination={false}
-        onRow={(record) => ({ onClick: () => navigate(`/runs/${record.id}`), style: { cursor: 'pointer' } })}
+        onRow={(record) => ({ onClick: () => navigate(`/bank-journal/runs/${record.id}`), style: { cursor: 'pointer' } })}
       />
     </div>
   );

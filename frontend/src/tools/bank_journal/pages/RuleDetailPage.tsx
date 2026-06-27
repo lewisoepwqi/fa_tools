@@ -126,7 +126,7 @@ export function RuleDetailPage() {
       <Card className="work-card">
         <Typography.Text type="secondary">未找到该规则。</Typography.Text>
         <div style={{ marginTop: 16 }}>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/templates/rule')}>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/bank-journal/templates/rule')}>
             返回
           </Button>
         </div>
@@ -157,7 +157,7 @@ export function RuleDetailPage() {
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card className="work-card">
         <Space style={{ marginBottom: 16 }}>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/templates/rule')}>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/bank-journal/templates/rule')}>
             返回
           </Button>
           <Typography.Title level={4} style={{ margin: 0 }}>

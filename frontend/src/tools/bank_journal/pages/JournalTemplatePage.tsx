@@ -104,7 +104,7 @@ export function JournalTemplatePage() {
         loading={loading}
         pagination={false}
         onRow={(record) => ({
-          onClick: () => navigate(`/templates/journal/${record.id}`),
+          onClick: () => navigate(`/bank-journal/templates/journal/${record.id}`),
           style: { cursor: 'pointer' }
         })}
       />

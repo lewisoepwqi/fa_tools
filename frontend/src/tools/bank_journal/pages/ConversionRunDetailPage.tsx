@@ -284,7 +284,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
       <Card className="work-card">
         <Typography.Text type="secondary">未找到该批次。</Typography.Text>
         <div style={{ marginTop: 16 }}>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/runs')}>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/bank-journal/runs')}>
             返回批次列表
           </Button>
         </div>
@@ -297,7 +297,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
       <Card className="work-card">
         <Space style={{ marginBottom: 16 }}>
           {!runProp && (
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/runs')}>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/bank-journal/runs')}>
               返回
             </Button>
           )}

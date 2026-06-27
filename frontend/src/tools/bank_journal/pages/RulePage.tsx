@@ -124,7 +124,7 @@ export function RulePage() {
         loading={loading}
         pagination={false}
         onRow={(record) => ({
-          onClick: () => navigate(`/templates/rule/${record.id}`),
+          onClick: () => navigate(`/bank-journal/templates/rule/${record.id}`),
           style: { cursor: 'pointer' }
         })}
       />
