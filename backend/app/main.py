@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.api.routes import (
     bank_templates,
     conversion_runs,
+    exports,
     files,
     journal_templates,
     mapping_profiles,
@@ -18,6 +19,7 @@ app.include_router(mapping_profiles.router)
 app.include_router(rules.router)
 app.include_router(conversion_runs.router)
 app.include_router(preview_rows.router)
+app.include_router(exports.router)
 
 
 @app.get("/health")
