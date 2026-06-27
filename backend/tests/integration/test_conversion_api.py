@@ -295,3 +295,106 @@ def test_creating_a_bank_template_records_an_audit_event(client) -> None:
     )
     logs = client.get("/api/audit-logs").json()
     assert any(log["action"] == "bank_template.created" for log in logs)
+
+
+def test_full_conversion_flow_end_to_end(client) -> None:
+    # 1. Upload a real CSV → source file persisted
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    )
+    assert upload.status_code == 200
+    upload_id = upload.json()["id"]
+
+    # 2. Convert → conversion run + bank_transactions + journal_preview_rows persisted
+    run = client.post(
+        "/api/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload_id],
+            "bank_parse_config": {
+                "file_type": "csv", "sheet_name": "Sheet1",
+                "header_row_index": 0, "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date", "入账日期": "posting_date",
+                    "收入": "income_amount", "支出": "expense_amount", "余额": "balance",
+                    "对方户名": "counterparty_name", "对方账号": "counterparty_account_no",
+                    "摘要": "summary", "用途": "purpose", "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [
+                {"target": "日期", "type": "field", "source": "transaction_date"},
+                {"target": "摘要", "type": "rule_output", "source": "journal_summary"},
+                {"target": "科目", "type": "rule_output", "source": "account_subject"},
+                {"target": "金额", "type": "field", "source": "net_amount"},
+            ],
+            "rules": [
+                {"id": "rule-1", "version_id": "rule-version-1", "priority": 10,
+                 "conditions": {"all": [{"field": "summary", "op": "contains", "value": "货款"}]},
+                 "actions": [
+                     {"field": "journal_summary", "value": "收到客户款项"},
+                     {"field": "account_subject", "value": "银行存款"},
+                 ],
+                 "allow_auto_confirm": False},
+            ],
+            "required_columns": ["日期", "摘要", "科目", "金额"],
+        },
+    )
+    assert run.status_code == 200
+    run_payload = run.json()
+    assert run_payload["summary"]["total_rows"] == 2
+    # 2nd row is the expense row (采购款) → needs_confirmation; take its persisted id
+    row_id = run_payload["preview_rows"][1]["id"]
+    assert row_id is not None
+
+    # 3. Manual adjustment → ManualAdjustment persisted, output_values updated
+    patch = client.patch(
+        f"/api/preview-rows/{row_id}",
+        json={"field_name": "科目", "new_value": "管理费用",
+              "reason": "人工指定采购科目", "adjusted_by": "user-1"},
+    )
+    assert patch.status_code == 200
+    assert patch.json()["field_name"] == "科目"
+
+    # 4. Confirm → Confirmation persisted, status → manually_confirmed
+    confirm = client.post(
+        f"/api/preview-rows/{row_id}/confirm",
+        json={"confirmed_by": "user-1", "comment": "已核对"},
+    )
+    assert confirm.status_code == 200
+    assert confirm.json()["status"] == "manually_confirmed"
+
+    # 5. Export → Export persisted, file written
+    export = client.post(
+        f"/api/conversion-runs/{run_payload['id']}/exports",
+        json={
+            "file_type": "csv",
+            "columns": ["日期", "摘要", "科目", "金额"],
+            "rows": [r["output_values"] for r in run_payload["preview_rows"]],
+            "exported_by": "user-1",
+            "only_confirmed": False,
+        },
+    )
+    assert export.status_code == 200
+    download_url = export.json()["download_url"]
+    assert download_url.startswith("/api/exports/")
+
+    # 6. Download → FileResponse with CSV content
+    download = client.get(download_url)
+    assert download.status_code == 200
+    assert "日期" in download.content.decode("utf-8-sig")
+
+    # 7. Audit trail captured the full chain
+    logs = client.get("/api/audit-logs").json()
+    actions = {log["action"] for log in logs}
+    for expected in {
+        "file.uploaded", "conversion_run.created",
+        "preview_row.adjusted", "preview_row.confirmed", "export.created",
+    }:
+        assert expected in actions, f"missing audit action: {expected}"
