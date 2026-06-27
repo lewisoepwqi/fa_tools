@@ -4,7 +4,13 @@ import type { ReactNode } from 'react';
 
 const { Header, Sider, Content } = Layout;
 
-export function AppShell({ children }: { children: ReactNode }) {
+interface AppShellProps {
+  activeKey: string;
+  onNavigate: (key: string) => void;
+  children: ReactNode;
+}
+
+export function AppShell({ activeKey, onNavigate, children }: AppShellProps) {
   return (
     <Layout className="app-shell">
       <Sider width={232} className="app-sider">
@@ -12,7 +18,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Menu
           theme="dark"
           mode="inline"
-          defaultSelectedKeys={['upload']}
+          selectedKeys={[activeKey]}
+          onClick={({ key }) => onNavigate(key)}
           items={[
             { key: 'upload', icon: <UploadOutlined />, label: '流水上传' },
             { key: 'runs', icon: <FileTextOutlined />, label: '处理批次' },
