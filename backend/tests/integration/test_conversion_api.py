@@ -142,3 +142,27 @@ def test_start_conversion_run_creates_preview_rows(client) -> None:
     assert payload["summary"]["total_rows"] == 2
     assert payload["preview_rows"][0]["output_values"]["科目"] == "银行存款"
     assert payload["preview_rows"][1]["status"] == "needs_confirmation"
+
+
+def test_confirm_preview_row_after_manual_adjustment(client) -> None:
+    row_id = "preview-row-1"
+    patch_response = client.patch(
+        f"/api/preview-rows/{row_id}",
+        json={
+            "field_name": "科目",
+            "new_value": "银行存款",
+            "reason": "人工确认供应商付款科目",
+            "adjusted_by": "user-1",
+        },
+    )
+
+    assert patch_response.status_code == 200
+    assert patch_response.json()["field_name"] == "科目"
+
+    confirm_response = client.post(
+        f"/api/preview-rows/{row_id}/confirm",
+        json={"confirmed_by": "user-1", "comment": "已核对"},
+    )
+
+    assert confirm_response.status_code == 200
+    assert confirm_response.json()["status"] == "manually_confirmed"

@@ -6,6 +6,7 @@ from app.api.routes import (
     files,
     journal_templates,
     mapping_profiles,
+    preview_rows,
     rules,
 )
 
@@ -16,6 +17,7 @@ app.include_router(journal_templates.router)
 app.include_router(mapping_profiles.router)
 app.include_router(rules.router)
 app.include_router(conversion_runs.router)
+app.include_router(preview_rows.router)
 
 
 @app.get("/health")
