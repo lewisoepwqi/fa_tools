@@ -48,3 +48,33 @@ def test_upload_unsupported_file_type_returns_client_error(client, upload_dir) -
 
     after = set(upload_dir.iterdir()) if upload_dir.exists() else set()
     assert before == after
+
+
+def test_create_bank_template_version(client) -> None:
+    response = client.post(
+        "/api/bank-templates",
+        json={
+            "company_id": "company-1",
+            "name": "中国银行 CSV",
+            "bank_name": "中国银行",
+            "bank_account_id": "bank-account-1",
+            "version": {
+                "file_type": "csv",
+                "sheet_selector_json": {"mode": "first"},
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases_json": {"交易日期": "transaction_date"},
+                "date_formats_json": ["%Y-%m-%d"],
+                "amount_mode": "income_expense_columns",
+                "amount_config_json": {"income": "income_amount", "expense": "expense_amount"},
+                "unique_key_config_json": {"fields": ["流水号"]},
+                "sample_file_id": "file-1",
+                "created_by": "user-1",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "中国银行 CSV"
+    assert payload["latest_version"]["version_no"] == 1

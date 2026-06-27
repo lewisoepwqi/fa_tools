@@ -1,9 +1,19 @@
 from fastapi import FastAPI
 
-from app.api.routes import files
+from app.api.routes import (
+    bank_templates,
+    files,
+    journal_templates,
+    mapping_profiles,
+    rules,
+)
 
 app = FastAPI(title="FA Tools API", version="0.1.0")
 app.include_router(files.router)
+app.include_router(bank_templates.router)
+app.include_router(journal_templates.router)
+app.include_router(mapping_profiles.router)
+app.include_router(rules.router)
 
 
 @app.get("/health")
