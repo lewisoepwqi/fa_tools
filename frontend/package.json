@@ -7,7 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "e2e": "playwright t"
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",
