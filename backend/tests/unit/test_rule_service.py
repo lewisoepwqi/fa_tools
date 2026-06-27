@@ -85,3 +85,101 @@ def test_apply_rules_marks_field_conflict() -> None:
 
     assert ExceptionCode.RULE_CONFLICT in result.exceptions
     assert result.conflicts["account_subject"] == ["银行存款", "应收账款"]
+
+
+def _single_condition_rule(condition: dict) -> list[dict]:
+    return [
+        {
+            "id": "rule-1",
+            "version_id": "rule-version-1",
+            "priority": 10,
+            "conditions": {"all": [condition]},
+            "actions": [{"field": "account_subject", "value": "银行存款"}],
+            "allow_auto_confirm": False,
+        }
+    ]
+
+
+def test_gte_on_none_field_does_not_match_and_does_not_crash() -> None:
+    """P1-4: 可选字段（如 balance）为 None 时 gte 应安全地不匹配。"""
+    transaction = _transaction()
+    transaction.balance = None
+
+    result = apply_rules(
+        transaction, _single_condition_rule({"field": "balance", "op": "gte", "value": "100"})
+    )
+
+    assert result.matched_rule_version_ids == []
+    assert result.outputs == {}
+
+
+def test_gte_amount_matches_threshold() -> None:
+    result = apply_rules(
+        _transaction(),
+        _single_condition_rule({"field": "net_amount", "op": "gte", "value": "10000"}),
+    )
+
+    assert result.matched_rule_version_ids == ["rule-version-1"]
+
+
+def test_gte_amount_below_threshold_does_not_match() -> None:
+    result = apply_rules(
+        _transaction(),
+        _single_condition_rule({"field": "net_amount", "op": "gte", "value": "99999"}),
+    )
+
+    assert result.matched_rule_version_ids == []
+
+
+def test_lte_amount_matches_threshold() -> None:
+    result = apply_rules(
+        _transaction(),
+        _single_condition_rule({"field": "net_amount", "op": "lte", "value": "15000"}),
+    )
+
+    assert result.matched_rule_version_ids == ["rule-version-1"]
+
+
+def test_date_range_gte_matches() -> None:
+    """P1-5: 日期范围操作符 date_gte。"""
+    result = apply_rules(
+        _transaction(),
+        _single_condition_rule(
+            {"field": "transaction_date", "op": "date_gte", "value": "2026-06-01"}
+        ),
+    )
+
+    assert result.matched_rule_version_ids == ["rule-version-1"]
+
+
+def test_date_range_gte_does_not_match() -> None:
+    result = apply_rules(
+        _transaction(),
+        _single_condition_rule(
+            {"field": "transaction_date", "op": "date_gte", "value": "2026-07-01"}
+        ),
+    )
+
+    assert result.matched_rule_version_ids == []
+
+
+def test_date_range_lte_matches() -> None:
+    result = apply_rules(
+        _transaction(),
+        _single_condition_rule(
+            {"field": "transaction_date", "op": "date_lte", "value": "2026-06-30"}
+        ),
+    )
+
+    assert result.matched_rule_version_ids == ["rule-version-1"]
+
+
+def test_date_range_lte_does_not_match() -> None:
+    result = apply_rules(
+        _transaction(),
+        _single_condition_rule(
+            {"field": "transaction_date", "op": "date_lte", "value": "2026-05-01"}
+        ),
+    )
+
+    assert result.matched_rule_version_ids == []

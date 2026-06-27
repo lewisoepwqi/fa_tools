@@ -127,3 +127,53 @@ def test_concat_unknown_source_raises_value_error() -> None:
 
     with pytest.raises(ValueError, match="备注.*missing_purpose"):
         apply_mappings(_transaction(), mappings, rule_outputs={})
+
+
+def test_conditional_mapping_matches_when_condition_met() -> None:
+    """P1-6: conditional 映射——满足条件取 then_value，否则取 else_value。"""
+    mappings = [
+        {
+            "target": "收支类别",
+            "type": "conditional",
+            "condition": {"field": "direction", "op": "eq", "value": "credit"},
+            "then_value": "收入",
+            "else_value": "支出",
+        }
+    ]
+
+    result = apply_mappings(_transaction(), mappings, rule_outputs={})
+
+    assert result == {"收支类别": "收入"}
+
+
+def test_conditional_mapping_returns_else_when_condition_not_met() -> None:
+    transaction = _transaction(direction=TransactionDirection.DEBIT)
+    mappings = [
+        {
+            "target": "收支类别",
+            "type": "conditional",
+            "condition": {"field": "direction", "op": "eq", "value": "credit"},
+            "then_value": "收入",
+            "else_value": "支出",
+        }
+    ]
+
+    result = apply_mappings(transaction, mappings, rule_outputs={})
+
+    assert result == {"收支类别": "支出"}
+
+
+def test_conditional_mapping_supports_contains_operator() -> None:
+    mappings = [
+        {
+            "target": "科目",
+            "type": "conditional",
+            "condition": {"field": "summary", "op": "contains", "value": "货款"},
+            "then_value": "应收账款",
+            "else_value": "其他科目",
+        }
+    ]
+
+    result = apply_mappings(_transaction(), mappings, rule_outputs={})
+
+    assert result == {"科目": "应收账款"}

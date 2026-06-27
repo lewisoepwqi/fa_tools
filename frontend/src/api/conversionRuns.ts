@@ -1,4 +1,19 @@
 import { apiClient } from './client';
+import type {
+  ConversionRunListItem,
+  ConversionRunResponse
+} from '../types/conversion';
+
+export async function listConversionRuns(companyId?: string): Promise<ConversionRunListItem[]> {
+  const params = companyId ? { company_id: companyId } : undefined;
+  const response = await apiClient.get<ConversionRunListItem[]>('/api/conversion-runs', { params });
+  return response.data;
+}
+
+export async function getConversionRun(runId: string): Promise<ConversionRunResponse> {
+  const response = await apiClient.get<ConversionRunResponse>(`/api/conversion-runs/${runId}`);
+  return response.data;
+}
 
 export async function createConversionRun(sourceFileIds: string[]) {
   const response = await apiClient.post('/api/conversion-runs', {

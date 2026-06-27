@@ -5,11 +5,13 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from app.core.enums import AmountMode, TransactionDirection
+from app.core.enums import AmountMode, ExceptionCode, TransactionDirection
 from app.schemas.standard import StandardBankTransaction
 from app.services.parser_service import (
     BankTemplateParseConfig,
+    detect_bank_template_config,
     detect_header_row,
+    parse_bank_rows,
     parse_bank_statement,
 )
 
@@ -141,30 +143,6 @@ def test_parse_xlsx_statement_with_native_excel_dates(tmp_path: Path) -> None:
     assert transactions[1].net_amount == Decimal("-3000.00")
 
 
-def test_parse_bank_statement_raises_for_both_income_and_expense_populated(tmp_path: Path) -> None:
-    fixture = tmp_path / "both_amounts.csv"
-    fixture.write_text(
-        "交易日期,入账日期,收入,支出,余额,对方户名,对方账号,摘要,用途,流水号\n"
-        "2026-06-01,2026-06-01,12000.00,3000.00,98000.00,某客户有限公司,6222000000000000,货款,6月服务费,TXN001\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="Both income and expense amounts are populated"):
-        parse_bank_statement(fixture, _base_config("csv"))
-
-
-def test_parse_bank_statement_raises_for_invalid_amount(tmp_path: Path) -> None:
-    fixture = tmp_path / "invalid_amount.csv"
-    fixture.write_text(
-        "交易日期,入账日期,收入,支出,余额,对方户名,对方账号,摘要,用途,流水号\n"
-        "2026-06-01,2026-06-01,12x00.00,,98000.00,某客户有限公司,6222000000000000,货款,6月服务费,TXN001\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="Invalid amount"):
-        parse_bank_statement(fixture, _base_config("csv"))
-
-
 def test_parse_bank_statement_raises_for_missing_sheet(tmp_path: Path) -> None:
     fixture = tmp_path / "missing_sheet.xlsx"
     workbook = Workbook()
@@ -175,6 +153,299 @@ def test_parse_bank_statement_raises_for_missing_sheet(tmp_path: Path) -> None:
         parse_bank_statement(fixture, _base_config("xlsx"))
 
 
+def test_parse_bank_statement_raises_for_header_out_of_range(tmp_path: Path) -> None:
+    """表头行越界属于结构性错误（与单行无关），仍抛出。"""
+    fixture = tmp_path / "empty.csv"
+    fixture.write_text("仅一行\n", encoding="utf-8")
+    config = _base_config("csv")
+    config.header_row_index = 5
+
+    with pytest.raises(ValueError, match="Header row index is out of range"):
+        parse_bank_statement(fixture, config)
+
+
+# ---------------------------------------------------------------------------
+# P1-1: 逐行异常标记（不再因单行错误中断批次）
+# ---------------------------------------------------------------------------
+
+
+def test_parse_rows_marks_invalid_amount_without_aborting(tmp_path: Path) -> None:
+    """金额无法解析：该行标记 INVALID_AMOUNT，其余行继续解析。"""
+    fixture = tmp_path / "invalid_amount.csv"
+    fixture.write_text(
+        "交易日期,入账日期,收入,支出,余额,对方户名,对方账号,摘要,用途,流水号\n"
+        "2026-06-01,2026-06-01,12x00.00,,98000.00,某客户有限公司,6222000000000000,货款,6月服务费,TXN001\n"
+        "2026-06-02,2026-06-02,,3000.00,95000.00,某供应商有限公司,6222111111111111,采购款,办公用品,TXN002\n",
+        encoding="utf-8",
+    )
+    rows = parse_bank_rows(fixture, _base_config("csv"))
+
+    assert len(rows) == 2
+    assert rows[0].transaction is None
+    assert ExceptionCode.INVALID_AMOUNT in rows[0].parse_errors
+    assert rows[0].source_row_index == 2
+    # 第二行不受影响，正常解析
+    assert rows[1].transaction is not None
+    assert rows[1].parse_errors == []
+
+
+def test_parse_rows_marks_invalid_date_without_aborting(tmp_path: Path) -> None:
+    """日期无法解析：该行标记 INVALID_DATE，其余行继续。"""
+    fixture = tmp_path / "invalid_date.csv"
+    fixture.write_text(
+        "交易日期,入账日期,收入,支出,余额,对方户名,对方账号,摘要,用途,流水号\n"
+        "not-a-date,2026-06-01,12000.00,,98000.00,某客户有限公司,6222000000000000,货款,6月服务费,TXN001\n"
+        "2026-06-02,2026-06-02,,3000.00,95000.00,某供应商有限公司,6222111111111111,采购款,办公用品,TXN002\n",
+        encoding="utf-8",
+    )
+    rows = parse_bank_rows(fixture, _base_config("csv"))
+
+    assert len(rows) == 2
+    assert rows[0].transaction is None
+    assert ExceptionCode.INVALID_DATE in rows[0].parse_errors
+    assert rows[1].transaction is not None
+
+
+def test_parse_rows_marks_missing_required_date_field(tmp_path: Path) -> None:
+    """交易日期缺失：标记 MISSING_REQUIRED_FIELD。"""
+    fixture = tmp_path / "missing_date.csv"
+    fixture.write_text(
+        "交易日期,入账日期,收入,支出,余额,对方户名,摘要\n"
+        ",2026-06-01,12000.00,,98000.00,某客户有限公司,货款\n",
+        encoding="utf-8",
+    )
+    rows = parse_bank_rows(fixture, _base_config("csv"))
+
+    assert len(rows) == 1
+    assert rows[0].transaction is None
+    assert ExceptionCode.MISSING_REQUIRED_FIELD in rows[0].parse_errors
+    # 失败行仍保留原始行快照用于追溯
+    assert rows[0].raw_row is not None
+
+
+# ---------------------------------------------------------------------------
+# P1-7: 表头自动识别接线
+# ---------------------------------------------------------------------------
+
+
+def test_detect_bank_template_config_from_sample(tmp_path: Path) -> None:
+    """从样本文件自动识别模板配置（PRD §5.1.3）。"""
+    fixture = tmp_path / "sample_with_title.csv"
+    fixture.write_text(
+        "中国银行交易流水明细\n"
+        "交易日期,入账日期,收入,支出,余额,对方户名,对方账号,摘要,用途,流水号\n"
+        "2026-06-01,2026-06-01,12000.00,,98000.00,某客户有限公司,6222000000000000,货款,6月服务费,TXN001\n",
+        encoding="utf-8",
+    )
+
+    detected = detect_bank_template_config(fixture, "csv")
+
+    # 第一行是标题，表头在第 1 行
+    assert detected["header_row_index"] == 1
+    assert detected["data_start_row_index"] == 2
+    assert detected["field_aliases"]["交易日期"] == "transaction_date"
+    assert detected["field_aliases"]["收入"] == "income_amount"
+    assert detected["field_aliases"]["支出"] == "expense_amount"
+    assert detected["amount_mode"] == "income_expense_columns"
+    assert detected["amount_config"] == {
+        "income": "income_amount",
+        "expense": "expense_amount",
+    }
+    assert "%Y-%m-%d" in detected["date_formats"]
+
+
+def test_detect_amount_mode_debit_credit_columns(tmp_path: Path) -> None:
+    fixture = tmp_path / "debit_credit_sample.csv"
+    fixture.write_text(
+        "交易日期,借方发生额,贷方发生额,对方户名,摘要\n"
+        "2026-06-01,,12000.00,某客户有限公司,货款\n",
+        encoding="utf-8",
+    )
+
+    detected = detect_bank_template_config(fixture, "csv")
+
+    assert detected["amount_mode"] == "debit_credit_columns"
+    assert detected["amount_config"] == {
+        "debit": "debit_amount",
+        "credit": "credit_amount",
+    }
+
+
 def test_parse_bank_statement_raises_for_unsupported_xls_file_type() -> None:
     with pytest.raises(ValueError, match="Unsupported file type: xls"):
         parse_bank_statement(Path("ignored.xls"), _base_config("xls"))
+
+
+# ---------------------------------------------------------------------------
+# P1-2: 三种缺失的金额模式
+# ---------------------------------------------------------------------------
+
+
+def _config_with(
+    file_type: str,
+    amount_mode: AmountMode,
+    amount_config: dict[str, str],
+    field_aliases: dict[str, str],
+    date_formats: list[str] | None = None,
+) -> BankTemplateParseConfig:
+    return BankTemplateParseConfig(
+        bank_account_id="bank-account-1",
+        source_file_id="file-1",
+        file_type=file_type,
+        sheet_name="Sheet1",
+        header_row_index=0,
+        data_start_row_index=1,
+        field_aliases=field_aliases,
+        amount_mode=amount_mode,
+        amount_config=amount_config,
+        date_formats=date_formats or ["%Y-%m-%d"],
+    )
+
+
+def _write_csv(tmp_path: Path, name: str, header: str, *rows: str) -> Path:
+    fixture = tmp_path / name
+    fixture.write_text(header + "\n" + "\n".join(rows) + "\n", encoding="utf-8")
+    return fixture
+
+
+def test_parse_single_amount_with_direction_credit(tmp_path: Path) -> None:
+    """单金额列 + 方向列：方向=收入 → credit。"""
+    fixture = _write_csv(
+        tmp_path,
+        "single_direction.csv",
+        "交易日期,金额,方向,对方户名,摘要",
+        "2026-06-01,12000.00,收入,某客户有限公司,货款",
+    )
+    config = _config_with(
+        "csv",
+        AmountMode.SINGLE_AMOUNT_WITH_DIRECTION,
+        amount_config={"amount": "amount", "direction": "direction"},
+        field_aliases={
+            "交易日期": "transaction_date",
+            "金额": "amount",
+            "方向": "direction",
+            "对方户名": "counterparty_name",
+            "摘要": "summary",
+        },
+    )
+
+    transactions = parse_bank_statement(fixture, config)
+
+    assert len(transactions) == 1
+    assert transactions[0].direction == TransactionDirection.CREDIT
+    assert transactions[0].credit_amount == Decimal("12000.00")
+    assert transactions[0].net_amount == Decimal("12000.00")
+
+
+def test_parse_single_amount_with_direction_debit(tmp_path: Path) -> None:
+    """单金额列 + 方向列：方向=支出 → debit。"""
+    fixture = _write_csv(
+        tmp_path,
+        "single_direction_debit.csv",
+        "交易日期,金额,方向,对方户名,摘要",
+        "2026-06-02,3000.00,支出,某供应商有限公司,采购款",
+    )
+    config = _config_with(
+        "csv",
+        AmountMode.SINGLE_AMOUNT_WITH_DIRECTION,
+        amount_config={"amount": "amount", "direction": "direction"},
+        field_aliases={
+            "交易日期": "transaction_date",
+            "金额": "amount",
+            "方向": "direction",
+            "对方户名": "counterparty_name",
+            "摘要": "summary",
+        },
+    )
+
+    transactions = parse_bank_statement(fixture, config)
+
+    assert len(transactions) == 1
+    assert transactions[0].direction == TransactionDirection.DEBIT
+    assert transactions[0].debit_amount == Decimal("3000.00")
+    assert transactions[0].net_amount == Decimal("-3000.00")
+
+
+def test_parse_debit_credit_columns(tmp_path: Path) -> None:
+    """借方/贷方双列：贷方列有值 → credit，借方列有值 → debit。"""
+    fixture = _write_csv(
+        tmp_path,
+        "debit_credit.csv",
+        "交易日期,借方发生额,贷方发生额,对方户名,摘要",
+        "2026-06-01,,12000.00,某客户有限公司,货款",
+        "2026-06-02,3000.00,,某供应商有限公司,采购款",
+    )
+    config = _config_with(
+        "csv",
+        AmountMode.DEBIT_CREDIT_COLUMNS,
+        amount_config={"debit": "debit_amount", "credit": "credit_amount"},
+        field_aliases={
+            "交易日期": "transaction_date",
+            "借方发生额": "debit_amount",
+            "贷方发生额": "credit_amount",
+            "对方户名": "counterparty_name",
+            "摘要": "summary",
+        },
+    )
+
+    transactions = parse_bank_statement(fixture, config)
+
+    assert len(transactions) == 2
+    assert transactions[0].direction == TransactionDirection.CREDIT
+    assert transactions[0].credit_amount == Decimal("12000.00")
+    assert transactions[1].direction == TransactionDirection.DEBIT
+    assert transactions[1].debit_amount == Decimal("3000.00")
+
+
+def test_parse_signed_amount_positive_is_credit(tmp_path: Path) -> None:
+    """带符号金额：正数 → credit。"""
+    fixture = _write_csv(
+        tmp_path,
+        "signed_pos.csv",
+        "交易日期,金额,对方户名,摘要",
+        "2026-06-01,12000.00,某客户有限公司,货款",
+    )
+    config = _config_with(
+        "csv",
+        AmountMode.SIGNED_AMOUNT,
+        amount_config={"amount": "amount"},
+        field_aliases={
+            "交易日期": "transaction_date",
+            "金额": "amount",
+            "对方户名": "counterparty_name",
+            "摘要": "summary",
+        },
+    )
+
+    transactions = parse_bank_statement(fixture, config)
+
+    assert len(transactions) == 1
+    assert transactions[0].direction == TransactionDirection.CREDIT
+    assert transactions[0].net_amount == Decimal("12000.00")
+
+
+def test_parse_signed_amount_negative_is_debit(tmp_path: Path) -> None:
+    """带符号金额：负数 → debit。"""
+    fixture = _write_csv(
+        tmp_path,
+        "signed_neg.csv",
+        "交易日期,金额,对方户名,摘要",
+        "2026-06-02,-3000.00,某供应商有限公司,采购款",
+    )
+    config = _config_with(
+        "csv",
+        AmountMode.SIGNED_AMOUNT,
+        amount_config={"amount": "amount"},
+        field_aliases={
+            "交易日期": "transaction_date",
+            "金额": "amount",
+            "对方户名": "counterparty_name",
+            "摘要": "summary",
+        },
+    )
+
+    transactions = parse_bank_statement(fixture, config)
+
+    assert len(transactions) == 1
+    assert transactions[0].direction == TransactionDirection.DEBIT
+    assert transactions[0].net_amount == Decimal("-3000.00")

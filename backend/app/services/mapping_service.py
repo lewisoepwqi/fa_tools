@@ -1,6 +1,7 @@
 from typing import Any
 
 from app.schemas.standard import StandardBankTransaction
+from app.services.rule_service import _match_condition
 
 
 def apply_mappings(
@@ -34,6 +35,13 @@ def apply_mappings(
                 if source_value is not None and source_value != "":
                     values.append(str(source_value))
             value = separator.join(values)
+        elif mapping_type == "conditional":
+            condition = mapping.get("condition", {})
+            value = (
+                mapping.get("then_value")
+                if _match_condition(transaction_data, condition)
+                else mapping.get("else_value")
+            )
         elif mapping_type == "manual":
             value = None
         else:

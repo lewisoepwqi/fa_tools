@@ -1,16 +1,34 @@
 import { AuditOutlined, FileTextOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
 import { Layout, Menu, Typography } from 'antd';
 import type { ReactNode } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 const { Header, Sider, Content } = Layout;
 
 interface AppShellProps {
-  activeKey: string;
-  onNavigate: (key: string) => void;
   children: ReactNode;
 }
 
-export function AppShell({ activeKey, onNavigate, children }: AppShellProps) {
+/** 根据当前 URL 路径派生侧边栏选中项，使详情页（如 /runs/:id）也高亮对应菜单。 */
+function activeKeyFromPathname(pathname: string): string {
+  if (pathname.startsWith('/runs')) return 'runs';
+  if (pathname.startsWith('/templates')) return 'templates';
+  if (pathname.startsWith('/audit')) return 'audit';
+  return 'upload';
+}
+
+const MENU_TARGETS: Record<string, string> = {
+  upload: '/',
+  runs: '/runs',
+  templates: '/templates',
+  audit: '/audit'
+};
+
+export function AppShell({ children }: AppShellProps) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activeKey = activeKeyFromPathname(location.pathname);
+
   return (
     <Layout className="app-shell">
       <Sider width={232} className="app-sider">
@@ -19,7 +37,7 @@ export function AppShell({ activeKey, onNavigate, children }: AppShellProps) {
           theme="dark"
           mode="inline"
           selectedKeys={[activeKey]}
-          onClick={({ key }) => onNavigate(key)}
+          onClick={({ key }) => navigate(MENU_TARGETS[key] ?? '/')}
           items={[
             { key: 'upload', icon: <UploadOutlined />, label: '流水上传' },
             { key: 'runs', icon: <FileTextOutlined />, label: '处理批次' },

@@ -39,6 +39,22 @@ class BankTemplateResponse(BaseModel):
     latest_version: BankTemplateVersionResponse
 
 
+class BankTemplateDetectRequest(BaseModel):
+    source_file_id: str
+    sheet_name: str | None = None
+
+
+class BankTemplateDetectResponse(BaseModel):
+    file_type: str
+    sheet_name: str
+    header_row_index: int
+    data_start_row_index: int
+    field_aliases: dict[str, str]
+    amount_mode: str
+    amount_config: dict[str, str]
+    date_formats: list[str]
+
+
 class CompanyJournalTemplateVersionCreate(BaseModel):
     file_type: str
     sheet_name: str | None = None
