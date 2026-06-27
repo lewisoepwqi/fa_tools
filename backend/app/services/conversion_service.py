@@ -143,9 +143,10 @@ def run_conversion(
                 payload.required_columns,
                 row_index,
             )
+            preview_id = str(uuid4())
             db.add(
                 JournalPreviewRow(
-                    id=str(uuid4()),
+                    id=preview_id,
                     conversion_run_id=run.id,
                     bank_transaction_id=bank_tx.id,
                     row_index=row_index,
@@ -156,7 +157,7 @@ def run_conversion(
                     rule_trace_json=preview.rule_trace,
                 )
             )
-            preview_rows.append(preview)
+            preview_rows.append(preview.model_copy(update={"id": preview_id}))
             row_index += 1
 
     run.summary_json = {"total_rows": len(preview_rows)}

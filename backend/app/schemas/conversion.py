@@ -6,6 +6,7 @@ from app.core.enums import ExceptionCode, PreviewStatus
 
 
 class JournalPreviewRowData(BaseModel):
+    id: str | None = None
     row_index: int
     output_values: dict[str, Any]
     status: PreviewStatus

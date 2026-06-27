@@ -145,7 +145,64 @@ def test_start_conversion_run_creates_preview_rows(client) -> None:
 
 
 def test_confirm_preview_row_after_manual_adjustment(client) -> None:
-    row_id = "preview-row-1"
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", (Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv").read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    run = client.post(
+        "/api/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "入账日期": "posting_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "对方户名": "counterparty_name",
+                    "对方账号": "counterparty_account_no",
+                    "摘要": "summary",
+                    "用途": "purpose",
+                    "流水号": "bank_transaction_id"
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"]
+            },
+            "mappings": [
+                {"target": "日期", "type": "field", "source": "transaction_date"},
+                {"target": "摘要", "type": "rule_output", "source": "journal_summary"},
+                {"target": "科目", "type": "rule_output", "source": "account_subject"},
+                {"target": "金额", "type": "field", "source": "net_amount"}
+            ],
+            "rules": [
+                {
+                    "id": "rule-1",
+                    "version_id": "rule-version-1",
+                    "priority": 10,
+                    "conditions": {"all": [{"field": "summary", "op": "contains", "value": "货款"}]},
+                    "actions": [
+                        {"field": "journal_summary", "value": "收到客户款项"},
+                        {"field": "account_subject", "value": "银行存款"}
+                    ],
+                    "allow_auto_confirm": False
+                }
+            ],
+            "required_columns": ["日期", "摘要", "科目", "金额"],
+        },
+    ).json()
+
+    row_id = run["preview_rows"][1]["id"]
+
     patch_response = client.patch(
         f"/api/preview-rows/{row_id}",
         json={
