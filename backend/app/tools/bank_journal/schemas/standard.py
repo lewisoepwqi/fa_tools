@@ -24,6 +24,9 @@ class StandardBankTransaction(BaseModel):
     transaction_type: str | None = None
     bank_transaction_id: str | None = None
     receipt_no: str | None = None
+    # 公司级自定义扩展字段：field_key → 值。
+    # 进入 model_dump() 后，规则引擎/映射引擎即可用 field_key 引用，零代码改动。
+    extra_fields: dict[str, Any] = Field(default_factory=dict)
     source_file_id: str
     source_sheet_name: str
     source_row_index: int = Field(ge=1)

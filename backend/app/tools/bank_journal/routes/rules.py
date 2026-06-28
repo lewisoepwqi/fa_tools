@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.api.deps import DbSession
 from app.core.enums import RecordStatus
 from app.services.audit_service import record_audit_event
+from app.tools.bank_journal.models.conversion import ConversionRunRuleVersion
 from app.tools.bank_journal.models.rule import Rule, RuleVersion
 from app.tools.bank_journal.schemas.rule import (
     RuleCreate,
@@ -68,10 +69,27 @@ def create_rule(db: DbSession, payload: RuleCreate) -> RuleResponse:
 
 
 @router.get("", response_model=list[RuleResponse])
-def list_rules(db: DbSession, company_id: str | None = None) -> list[RuleResponse]:
+def list_rules(
+    db: DbSession,
+    company_id: str | None = None,
+    scope_type: str | None = None,
+    scope_id: str | None = None,
+) -> list[RuleResponse]:
+    """列表。
+
+    可选过滤：company_id / scope_type(+scope_id)。
+    scope 过滤用于模板详情页展示"绑定了哪些规则"（规则用松散 scope_type+scope_id 约定绑定）。
+    scope_id 通常需配合 scope_type 一起传（按约定 scope_type=bank_template, scope_id=<模板id>）。
+    """
     query = db.query(Rule)
     if company_id is not None:
         query = query.filter(Rule.company_id == company_id)
+    if scope_type is not None:
+        query = query.filter(Rule.scope_type == scope_type)
+    if scope_id is not None:
+        query = query.filter(Rule.scope_id == scope_id)
+    # 软删除项不在列表/下拉中展示
+    query = query.filter(Rule.status != RecordStatus.DELETED.value)
     out: list[RuleResponse] = []
     for parent in query.all():
         latest = _latest_rule_version(db, parent.id)
@@ -173,6 +191,47 @@ def update_rule_status(db: DbSession, rule_id: str, status: str) -> RuleResponse
         after=response.model_dump(),
     )
     return response
+
+
+@router.delete("/{rule_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+def delete_rule(db: DbSession, rule_id: str) -> None:
+    """软删除规则（status→deleted）。
+
+    引用拦截最严格：ConversionRunRuleVersion.rule_version_id 是 NOT NULL，
+    一旦任一规则版本被批次引用即 409（保证历史批次可追溯）。
+    """
+    parent = _get_rule_or_404(db, rule_id)
+
+    version_ids = [
+        v.id
+        for v in db.query(RuleVersion.id).filter(RuleVersion.rule_id == rule_id).all()
+    ]
+    run_count = (
+        db.query(ConversionRunRuleVersion)
+        .filter(ConversionRunRuleVersion.rule_version_id.in_(version_ids))
+        .count()
+        if version_ids
+        else 0
+    )
+    if run_count > 0:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail=f"该规则已被 {run_count} 个转换批次引用，无法删除（需保留历史可追溯）。",
+        )
+
+    before = _to_response(parent, _latest_rule_version(db, rule_id))
+    parent.status = RecordStatus.DELETED.value
+    db.commit()
+    db.refresh(parent)
+    record_audit_event(
+        db,
+        company_id=parent.company_id,
+        actor_id=None,
+        action="rule.deleted",
+        entity_type="rule",
+        entity_id=rule_id,
+        before=before.model_dump(),
+    )
 
 
 @router.post("/reorder", response_model=dict[str, Any])

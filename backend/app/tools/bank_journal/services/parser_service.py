@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Any
 
 from openpyxl import load_workbook
 
@@ -66,6 +67,19 @@ class BankTemplateParseConfig:
     amount_config: dict[str, str]
     date_formats: list[str]
     currency: str = "CNY"
+    # 公司级自定义扩展字段定义。解析时据此填充 extra_fields。
+    # service 层不依赖 ORM 模型，用轻量 dataclass 承载。
+    custom_fields: list[CustomFieldDef] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class CustomFieldDef:
+    """公司级自定义扩展字段的解析期定义（与 ORM CustomField 解耦的轻量视图）。"""
+
+    field_key: str
+    slot_key: str
+    data_type: str  # text / amount / date
+    header_keywords: list[str]
 
 
 @dataclass(slots=True)
@@ -199,6 +213,26 @@ def _try_parse_row(
         return base
 
     balance = _decimal_or_none(normalized_row.get("balance"))
+
+    # 公司级自定义扩展字段：从 normalized_row 取值，按 data_type 解析后填入 extra_fields。
+    # _detect_field_aliases 已把扩展字段表头映射为 field_key，故这里用 field_key 取值。
+    extra_fields: dict[str, Any] = {}
+    for cf in config.custom_fields:
+        raw = normalized_row.get(cf.field_key)
+        cleaned = _clean_cell(raw) if raw is not None else None
+        if not cleaned:
+            continue
+        try:
+            if cf.data_type == "amount":
+                extra_fields[cf.field_key] = _decimal_or_none(cleaned)
+            elif cf.data_type == "date":
+                extra_fields[cf.field_key] = _parse_date(cleaned, config.date_formats)
+            else:  # text
+                extra_fields[cf.field_key] = str(cleaned)
+        except ValueError:
+            # 扩展字段解析失败不阻断整行（保守：核心字段已成功），仅跳过该字段
+            continue
+
     base.transaction = StandardBankTransaction(
         transaction_date=transaction_date,
         posting_date=posting_date,
@@ -217,6 +251,7 @@ def _try_parse_row(
         transaction_type=_none_if_blank(normalized_row.get("transaction_type")),
         bank_transaction_id=_none_if_blank(normalized_row.get("bank_transaction_id")),
         receipt_no=_none_if_blank(normalized_row.get("receipt_no")),
+        extra_fields=extra_fields,
         source_file_id=config.source_file_id,
         source_sheet_name=config.sheet_name,
         source_row_index=source_row_index,
@@ -240,10 +275,14 @@ def detect_bank_template_config(
     path: str | Path,
     file_type: str,
     sheet_name: str = "",
+    custom_field_defs: list[CustomFieldDef] | None = None,
+    builtin_keyword_overrides: dict[str, list[str]] | None = None,
 ) -> dict[str, object]:
     """从样本文件自动识别银行模板配置（PRD §5.1.3 / §9.1）。
 
     识别：表头行位置、数据起始行、字段别名、金额模式、日期格式候选。
+    ``custom_field_defs`` 传入公司级扩展字段后，表头识别会包含扩展字段。
+    ``builtin_keyword_overrides`` 传入公司级内置关键词覆盖后，内置字段按覆盖集识别。
     返回可直接填入 `BankTemplateVersionCreate` 的 dict。
     """
     resolved_sheet = sheet_name or _first_sheet_name(path, file_type)
@@ -252,7 +291,9 @@ def detect_bank_template_config(
     header_row = rows[header_row_index] if header_row_index < len(rows) else []
     data_start_row_index = _detect_data_start_row(rows, header_row_index)
 
-    field_aliases = _detect_field_aliases(header_row)
+    field_aliases = _detect_field_aliases(
+        header_row, custom_field_defs, builtin_keyword_overrides
+    )
     amount_mode, amount_config = _detect_amount_mode(field_aliases)
     date_formats = _detect_date_formats(rows, data_start_row_index)
 
@@ -286,8 +327,12 @@ def _detect_data_start_row(rows: list[list[CellValue]], header_row_index: int) -
     return header_row_index + 1
 
 
-def _detect_field_aliases(header_row: list[CellValue]) -> dict[str, str]:
-    """把表头中文关键词映射到标准字段名。"""
+def _detect_field_aliases(
+    header_row: list[CellValue],
+    custom_fields: list[CustomFieldDef] | None = None,
+    builtin_keyword_overrides: dict[str, list[str]] | None = None,
+) -> dict[str, str]:
+    """把表头中文关键词映射到标准字段名（含公司级扩展字段 + 内置关键词覆盖）。"""
     aliases: dict[str, str] = {}
     used_fields: set[str] = set()
     for cell in header_row:
@@ -296,21 +341,57 @@ def _detect_field_aliases(header_row: list[CellValue]) -> dict[str, str]:
             continue
         if header in aliases:
             continue
-        canonical = _match_canonical_field(header)
+        canonical = _match_canonical_field(header, custom_fields, builtin_keyword_overrides)
         if canonical is not None and canonical not in used_fields:
             aliases[header] = canonical
             used_fields.add(canonical)
     return aliases
 
 
-def _match_canonical_field(header: str) -> str | None:
-    """返回表头对应的标准字段名（精确优先，再前缀匹配）。"""
+def _match_canonical_field(
+    header: str,
+    custom_fields: list[CustomFieldDef] | None = None,
+    builtin_keyword_overrides: dict[str, list[str]] | None = None,
+) -> str | None:
+    """返回表头对应的标准字段名（精确优先，再前缀匹配）。
+
+    匹配顺序：
+    1. 内置 HEADER_FIELD_MAP（可被 builtin_keyword_overrides 覆盖关键词集）
+    2. 公司级扩展字段的 header_keywords
+
+    builtin_keyword_overrides: {field_key: 完整关键词列表（含内置默认+覆盖）}。
+    传入后，该 field_key 的识别用覆盖后的关键词集，否则用 HEADER_FIELD_MAP 默认。
+    """
+    # 内置字段：优先用覆盖后的关键词集（若有），否则用 HEADER_FIELD_MAP
+    if builtin_keyword_overrides:
+        for canonical, keywords in builtin_keyword_overrides.items():
+            if header in keywords:
+                return canonical
     for keywords, canonical in HEADER_FIELD_MAP.items():
+        if builtin_keyword_overrides and canonical in builtin_keyword_overrides:
+            continue  # 已用覆盖集匹配过，跳过默认集避免重复
         if header in keywords:
             return canonical
+    # 前缀/子串匹配（同样优先覆盖集）
+    if builtin_keyword_overrides:
+        for canonical, keywords in builtin_keyword_overrides.items():
+            if any(header.startswith(k) or k in header for k in keywords):
+                return canonical
     for keywords, canonical in HEADER_FIELD_MAP.items():
+        if builtin_keyword_overrides and canonical in builtin_keyword_overrides:
+            continue
         if any(header.startswith(keyword) or keyword in header for keyword in keywords):
             return canonical
+    # 公司级扩展字段：header_keywords → field_key
+    if custom_fields:
+        for cf in custom_fields:
+            kws = cf.header_keywords or []
+            if header in kws:
+                return cf.field_key
+        for cf in custom_fields:
+            kws = cf.header_keywords or []
+            if any(header.startswith(k) or k in header for k in kws):
+                return cf.field_key
     return None
 
 

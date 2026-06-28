@@ -13,12 +13,12 @@ import {
   Spin,
   Table,
   Tag,
-  Typography,
-  message
+  Typography
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { message } from '../../../components/antdApp';
 import { getConversionRun } from '../api/conversionRuns';
 import { createExport, downloadExport } from '../api/exports';
 import { adjustPreviewRow, confirmPreviewRow } from '../api/previewRows';
@@ -323,6 +323,15 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
           </Descriptions.Item>
           <Descriptions.Item label="创建时间">
             {run.created_at ? new Date(run.created_at).toLocaleString() : '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label="银行模板版本" span={2}>
+            {run.bank_template_version_id ?? '内联配置（未绑定模板）'}
+          </Descriptions.Item>
+          <Descriptions.Item label="日记账模板版本">
+            {run.company_journal_template_version_id ?? '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label="映射方案版本">
+            {run.mapping_profile_version_id ?? '-'}
           </Descriptions.Item>
         </Descriptions>
       </Card>

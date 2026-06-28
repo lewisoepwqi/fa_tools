@@ -1,12 +1,17 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Modal, Table, message } from 'antd';
+import { Button, Modal, Popconfirm, Space, Switch, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createBankTemplate, listBankTemplates } from '../api/bankTemplates';
+import { message } from '../../../components/antdApp';
+import {
+  createBankTemplate,
+  deleteBankTemplate,
+  listBankTemplates,
+  setBankTemplateStatus
+} from '../api/bankTemplates';
 import { BankTemplateWizard } from '../components/BankTemplateWizard';
 import type { BankTemplateWizardValues } from '../components/BankTemplateWizard';
-import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { BankTemplate } from '../types/templates';
 
@@ -75,6 +80,26 @@ export function BankTemplatePage() {
     }
   };
 
+  const handleToggleStatus = async (id: string, next: 'active' | 'inactive') => {
+    try {
+      await setBankTemplateStatus(id, next);
+      message.success(next === 'active' ? '已启用' : '已停用');
+      load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '操作失败');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteBankTemplate(id);
+      message.success('已删除');
+      load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '删除失败');
+    }
+  };
+
   const columns: ColumnsType<BankTemplate> = [
     { title: '名称', dataIndex: 'name', key: 'name' },
     {
@@ -89,11 +114,58 @@ export function BankTemplatePage() {
       key: 'bank_account_id',
       render: (v) => v ?? '-'
     },
-    { title: '状态', dataIndex: 'status', key: 'status', render: (_, r) => <StatusTag status={r.status} /> },
+    {
+      title: '状态',
+      key: 'status',
+      width: 80,
+      render: (_, r) => (
+        <Switch
+          size="small"
+          checked={r.status === 'active'}
+          onChange={(checked) => handleToggleStatus(r.id, checked ? 'active' : 'inactive')}
+        />
+      )
+    },
     {
       title: '最新版本',
       key: 'latest_version',
       render: (_, r) => <VersionBadge version={r.latest_version.version_no} />
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 130,
+      fixed: 'right',
+      render: (_, r) => (
+        <Space>
+          <Button
+            size="small"
+            type="link"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/bank-journal/templates/bank/${r.id}`);
+            }}
+          >
+            详情
+          </Button>
+          <Popconfirm
+            title="确定删除该银行模板？"
+            description="被转换批次引用的模板无法删除。"
+            okText="删除"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            onConfirm={(e) => {
+              e?.stopPropagation();
+              handleDelete(r.id);
+            }}
+            onCancel={(e) => e?.stopPropagation()}
+          >
+            <Button size="small" type="link" danger onClick={(e) => e.stopPropagation()}>
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
+      )
     }
   ];
 
@@ -123,7 +195,7 @@ export function BankTemplatePage() {
         title="新建银行流水模板"
         footer={null}
         onCancel={() => setWizardOpen(false)}
-        destroyOnClose
+        destroyOnHidden
         width={680}
       >
         <div style={{ marginTop: 16 }}>

@@ -4,6 +4,7 @@
 和测试库（tests/conftest.py）能发现全部工具表。
 """
 
+from app.tools.bank_journal.models.builtin_field_override import BuiltinFieldOverride
 from app.tools.bank_journal.models.conversion import (
     BankTransaction,
     Confirmation,
@@ -13,6 +14,14 @@ from app.tools.bank_journal.models.conversion import (
     Export,
     JournalPreviewRow,
     ManualAdjustment,
+)
+from app.tools.bank_journal.models.custom_field import (
+    ALL_SLOTS,
+    AMOUNT_SLOTS,
+    DATE_SLOTS,
+    SLOTS_BY_TYPE,
+    TEXT_SLOTS,
+    CustomField,
 )
 from app.tools.bank_journal.models.mapping import (
     MappingProfile,
@@ -27,15 +36,20 @@ from app.tools.bank_journal.models.template import (
 )
 
 __all__ = [
+    "ALL_SLOTS",
+    "AMOUNT_SLOTS",
     "BankTemplate",
     "BankTemplateVersion",
     "BankTransaction",
+    "BuiltinFieldOverride",
     "CompanyJournalTemplate",
     "CompanyJournalTemplateVersion",
     "Confirmation",
     "ConversionRun",
     "ConversionRunFile",
     "ConversionRunRuleVersion",
+    "CustomField",
+    "DATE_SLOTS",
     "Export",
     "JournalPreviewRow",
     "ManualAdjustment",
@@ -43,4 +57,6 @@ __all__ = [
     "MappingProfileVersion",
     "Rule",
     "RuleVersion",
+    "SLOTS_BY_TYPE",
+    "TEXT_SLOTS",
 ]

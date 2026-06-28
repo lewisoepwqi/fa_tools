@@ -7,6 +7,7 @@
 from app.tools.bank_journal.routes import (
     bank_templates,
     conversion_runs,
+    custom_fields,
     exports,
     journal_templates,
     mapping_profiles,
@@ -19,6 +20,7 @@ routers = [
     journal_templates.router,
     mapping_profiles.router,
     rules.router,
+    custom_fields.router,
     conversion_runs.router,
     preview_rows.router,
     exports.router,

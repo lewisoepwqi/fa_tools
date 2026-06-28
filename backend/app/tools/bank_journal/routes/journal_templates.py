@@ -1,7 +1,10 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import DbSession
 from app.services.audit_service import record_audit_event
+from app.tools.bank_journal.models.conversion import ConversionRun
+from app.tools.bank_journal.models.mapping import MappingProfile
+from app.tools.bank_journal.models.template import CompanyJournalTemplateVersion
 from app.tools.bank_journal.schemas.template import (
     CompanyJournalTemplateCreate,
     CompanyJournalTemplateResponse,
@@ -100,3 +103,51 @@ def update_journal_template_status(
         after=response.model_dump(),
     )
     return response
+
+
+@router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_journal_template(db: DbSession, template_id: str) -> None:
+    """软删除日记账模板（status→deleted）。引用拦截同银行模板。"""
+    template_service.get_journal_template(db, template_id)
+
+    version_ids = [
+        v.id
+        for v in db.query(CompanyJournalTemplateVersion.id)
+        .filter(CompanyJournalTemplateVersion.company_journal_template_id == template_id)
+        .all()
+    ]
+    run_count = (
+        db.query(ConversionRun)
+        .filter(ConversionRun.company_journal_template_version_id.in_(version_ids))
+        .count()
+        if version_ids
+        else 0
+    )
+    if run_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"该日记账模板已被 {run_count} 个转换批次引用，无法删除（需保留历史可追溯）。",
+        )
+    mapping_count = (
+        db.query(MappingProfile)
+        .filter(MappingProfile.company_journal_template_id == template_id)
+        .filter(MappingProfile.status != "deleted")
+        .count()
+    )
+    if mapping_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"该日记账模板被 {mapping_count} 个映射方案引用，请先删除或解绑相关映射方案。",
+        )
+
+    before = template_service.get_journal_template(db, template_id)
+    parent_entity = template_service.soft_delete_journal_template(db, template_id)
+    record_audit_event(
+        db,
+        company_id=parent_entity.company_id,
+        actor_id=None,
+        action="journal_template.deleted",
+        entity_type="company_journal_template",
+        entity_id=template_id,
+        before=before.model_dump(),
+    )

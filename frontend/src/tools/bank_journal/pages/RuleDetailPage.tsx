@@ -11,12 +11,12 @@ import {
   Switch,
   Table,
   Tag,
-  Typography,
-  message
+  Typography
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { message } from '../../../components/antdApp';
 import {
   createRuleVersion,
   getRule,
@@ -30,6 +30,7 @@ import {
   ruleDataToBackend,
   type RuleEditorData
 } from '../components/RuleEditor';
+import { useStandardFields } from '../components/useStandardFields';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { Rule, RuleVersion } from '../types/rules';
@@ -39,6 +40,7 @@ const ACTOR = 'user-1';
 export function RuleDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const standardFields = useStandardFields();
   const [data, setData] = useState<Rule | null>(null);
   const [versions, setVersions] = useState<RuleVersion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -207,7 +209,7 @@ export function RuleDetailPage() {
         confirmLoading={editing}
         onOk={handleEdit}
         onCancel={() => setEditOpen(false)}
-        destroyOnClose
+        destroyOnHidden
         width={680}
       >
         <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -221,7 +223,12 @@ export function RuleDetailPage() {
               <Typography.Text>允许自动确认</Typography.Text>
             </div>
           </div>
-          <RuleEditor value={editData} onChange={setEditData} />
+          <RuleEditor
+            value={editData}
+            onChange={setEditData}
+            standardFieldOptions={standardFields.options}
+            fieldTypeMap={standardFields.typeMap}
+          />
         </div>
       </Modal>
 

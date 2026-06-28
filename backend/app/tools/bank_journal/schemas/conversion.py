@@ -42,6 +42,42 @@ class ConversionRunCreate(BaseModel):
     mapping_profile_version_id: str | None = None
 
 
+class ConversionRunFromConfigCreate(BaseModel):
+    """P0：用已配置的版本化模板/映射/规则驱动转换。
+
+    与 ``ConversionRunCreate``（内联传 parse_config/mappings/rules）相对，
+    本 schema 只传配置 ID，服务端从 DB 查最新版本并拼装内联参数后执行同一套
+    parse/preview 逻辑。让用户在四个配置模块里的配置真正生效。
+
+    每类配置支持「指定版本 ID」或「指定父 ID（自动取最新版本）」二选一。
+    """
+
+    company_id: str
+    bank_account_id: str
+    source_file_ids: list[str]
+    bank_template_version_id: str | None = None
+    bank_template_id: str | None = None
+    company_journal_template_version_id: str | None = None
+    company_journal_template_id: str | None = None
+    mapping_profile_version_id: str | None = None
+    mapping_profile_id: str | None = None
+    rule_ids: list[str] = []
+    required_columns: list[str] = []
+
+
+class DryRunCreate(ConversionRunFromConfigCreate):
+    """P3：试跑请求。复用 from-config 的配置选择，额外限制返回行数。"""
+
+    limit: int = 20
+
+
+class DryRunResponse(BaseModel):
+    """P3：试跑结果（不落库）。只返回前 N 行预览 + 统计，供配置时即时验证。"""
+
+    summary: "ConversionRunSummary"
+    preview_rows: list[JournalPreviewRowData]
+
+
 class ConversionRunSummary(BaseModel):
     total_rows: int = 0
     parse_failed_rows: int = 0

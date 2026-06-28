@@ -1,8 +1,18 @@
 import { apiClient } from '../../../api/client';
 import type { Rule, RuleVersion } from '../types/rules';
 
-export async function listRules(companyId?: string): Promise<Rule[]> {
-  const params = companyId ? { company_id: companyId } : undefined;
+/** 过滤参数：用于模板详情页展示"绑定了哪些规则"等反向关联查询。 */
+export interface RuleFilter {
+  company_id?: string;
+  scope_type?: string;
+  scope_id?: string;
+}
+
+export async function listRules(filter: RuleFilter = {}): Promise<Rule[]> {
+  const params: Record<string, string> = {};
+  if (filter.company_id) params.company_id = filter.company_id;
+  if (filter.scope_type) params.scope_type = filter.scope_type;
+  if (filter.scope_id) params.scope_id = filter.scope_id;
   const response = await apiClient.get<Rule[]>('/api/tools/bank-journal/rules', { params });
   return response.data;
 }
@@ -44,6 +54,11 @@ export async function setRuleStatus(
     params: { status }
   });
   return response.data;
+}
+
+/** 软删除规则（被批次引用时后端返回 409）。 */
+export async function deleteRule(id: string): Promise<void> {
+  await apiClient.delete(`/api/tools/bank-journal/rules/${id}`);
 }
 
 export async function reorderRules(

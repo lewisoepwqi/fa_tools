@@ -1,14 +1,16 @@
 import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
-import { Button, Card, Descriptions, Modal, Space, Spin, Table, Typography, message } from 'antd';
+import { Button, Card, Descriptions, Empty, Modal, Space, Spin, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { message } from '../../../components/antdApp';
 import {
   createBankTemplateVersion,
   getBankTemplate,
   listBankTemplateVersions,
   setBankTemplateStatus
 } from '../api/bankTemplates';
+import { listMappingProfiles } from '../api/mappingProfiles';
 import { AMOUNT_MODE_LABEL, FILE_TYPE_LABEL, rowIndexOf } from '../constants';
 import { BankTemplateWizard } from '../components/BankTemplateWizard';
 import type { BankTemplateWizardValues } from '../components/BankTemplateWizard';
@@ -16,6 +18,7 @@ import { DetectResultView } from '../components/DetectResultView';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { BankTemplate, BankTemplateVersion } from '../types/templates';
+import type { MappingProfile } from '../types/mapping';
 
 const ACTOR = 'user-1';
 
@@ -24,6 +27,7 @@ export function BankTemplateDetailPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<BankTemplate | null>(null);
   const [versions, setVersions] = useState<BankTemplateVersion[]>([]);
+  const [referencedBy, setReferencedBy] = useState<MappingProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -31,14 +35,20 @@ export function BankTemplateDetailPage() {
 
   const load = (templateId: string) => {
     setLoading(true);
-    Promise.all([getBankTemplate(templateId), listBankTemplateVersions(templateId)])
-      .then(([d, vs]) => {
+    Promise.all([
+      getBankTemplate(templateId),
+      listBankTemplateVersions(templateId),
+      listMappingProfiles({ bank_template_id: templateId })
+    ])
+      .then(([d, vs, refs]) => {
         setData(d);
         setVersions(vs);
+        setReferencedBy(refs);
       })
       .catch(() => {
         setData(null);
         setVersions([]);
+        setReferencedBy([]);
       })
       .finally(() => setLoading(false));
   };
@@ -175,13 +185,51 @@ export function BankTemplateDetailPage() {
         <DetectResultView config={v} />
       </Card>
 
+      <Card className="work-card" title="被引用情况">
+        {referencedBy.length === 0 ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="暂无映射方案引用此银行模板"
+          >
+            <Button type="primary" onClick={() => navigate('/bank-journal/templates/mapping')}>
+              去新建映射方案
+            </Button>
+          </Empty>
+        ) : (
+          <Table<MappingProfile>
+            rowKey="id"
+            dataSource={referencedBy}
+            pagination={false}
+            size="small"
+            onRow={(record) => ({
+              onClick: () => navigate(`/bank-journal/templates/mapping/${record.id}`),
+              style: { cursor: 'pointer' }
+            })}
+            columns={[
+              { title: '映射方案名称', dataIndex: 'name', key: 'name' },
+              {
+                title: '最新版本',
+                key: 'latest_version',
+                render: (_, r) => <VersionBadge version={r.latest_version.version_no} />
+              },
+              {
+                title: '状态',
+                key: 'status',
+                width: 80,
+                render: (_, r) => <StatusTag status={r.status} />
+              }
+            ]}
+          />
+        )}
+      </Card>
+
       {/* 编辑（创建新版本）：用向导，回填当前版本配置作为起点 */}
       <Modal
         open={editOpen}
         title="编辑模板（创建新版本）"
         footer={null}
         onCancel={() => setEditOpen(false)}
-        destroyOnClose
+        destroyOnHidden
         width={680}
       >
         <div style={{ marginTop: 16 }}>

@@ -3,14 +3,45 @@ import { Alert, Button, Input, InputNumber, Select, Space, Typography } from 'an
 import { useMemo } from 'react';
 import {
   FIELD_LABEL,
+  RULE_ACTION_FIELD_LABEL,
+  RULE_ACTION_FIELD_OPTIONS,
   RULE_OPERATORS,
   RULE_OPERATOR_LABEL,
   STANDARD_FIELDS,
-  STANDARD_FIELD_OPTIONS
+  STANDARD_FIELD_OPTIONS,
+  type StandardFieldType
 } from '../constants';
 
-/** 规则字段下拉选项（label 来自字典，显示中文）。 */
+/** 条件字段下拉选项（仅流水原始字段——条件只针对流水本身）。 */
 const FIELD_OPTIONS = STANDARD_FIELD_OPTIONS;
+
+/**
+ * 动作字段下拉选项（P1）。
+ *
+ * 规则的动作不是改流水原始字段，而是产出供映射方案引用的输出键（科目、记账摘要等），
+ * 因此选项 = 业务动作字段 ∪ 流水原始字段。条件字段则仍只用流水原始字段。
+ * 可选注入 journalColumns（日记账输出列），把目标列也作为可设置项。
+ */
+function buildActionFieldOptions(
+  journalColumns?: string[],
+  standardFieldOptions?: { value: string; label: string }[]
+) {
+  const base = RULE_ACTION_FIELD_OPTIONS;
+  const cols = (journalColumns ?? []).map((c) => ({ value: c, label: c }));
+  // 动作字段去重（业务字段优先）
+  const seen = new Set(base.map((b) => b.value));
+  const merged = [...base, ...cols.filter((c) => !seen.has(c.value))];
+  // 追加流水原始字段（含公司扩展字段），用 optGroup 分组便于辨识
+  return [
+    { label: '业务字段', options: merged },
+    { label: '流水字段', options: standardFieldOptions ?? STANDARD_FIELD_OPTIONS }
+  ];
+}
+
+/** 动作字段 label：优先业务字段字典，其次流水字段字典，最后原值。 */
+function actionFieldLabel(key: string): string {
+  return RULE_ACTION_FIELD_LABEL[key] ?? FIELD_LABEL[key] ?? key;
+}
 
 /** 单个条件（对齐后端 conditions_json.all[]）。 */
 export interface RuleCondition {
@@ -35,13 +66,36 @@ export interface RuleEditorData {
 interface RuleEditorProps {
   value: RuleEditorData;
   onChange: (data: RuleEditorData) => void;
+  /** 日记账输出列（可选，来自已绑定日记账模板）；注入后动作字段可设置这些列。 */
+  journalColumns?: string[];
+  /** 流水标准字段下拉（含公司扩展字段）。默认用构建期内置字段；页面注入运行时全集。 */
+  standardFieldOptions?: { value: string; label: string }[];
+  /** 字段→类型映射（含扩展字段），用于条件操作符智能过滤。默认用内置 STANDARD_FIELDS。 */
+  fieldTypeMap?: Record<string, string>;
 }
 
 /**
  * 规则可视化编辑器：条件构造器 + 动作编辑器 + 自然语言回显。
  * 财务无需手写 JSON，全部通过下拉框/输入框完成配置。
  */
-export function RuleEditor({ value, onChange }: RuleEditorProps) {
+export function RuleEditor({
+  value,
+  onChange,
+  journalColumns,
+  standardFieldOptions,
+  fieldTypeMap
+}: RuleEditorProps) {
+  const fieldOptions = standardFieldOptions ?? FIELD_OPTIONS;
+  // 合并内置 + 注入的类型映射（注入优先，含扩展字段）
+  const typeMap = useMemo(() => {
+    const base: Record<string, string> = {};
+    for (const f of STANDARD_FIELDS) base[f.key] = f.type;
+    return { ...base, ...(fieldTypeMap ?? {}) };
+  }, [fieldTypeMap]);
+  const actionFieldOptions = useMemo(
+    () => buildActionFieldOptions(journalColumns, standardFieldOptions),
+    [journalColumns, standardFieldOptions]
+  );
   const updateCondition = (index: number, patch: Partial<RuleCondition>) => {
     const conditions = value.conditions.map((c, i) => (i === index ? { ...c, ...patch } : c));
     onChange({ ...value, conditions });
@@ -88,6 +142,8 @@ export function RuleEditor({ value, onChange }: RuleEditorProps) {
             <ConditionRow
               key={i}
               condition={cond}
+              fieldOptions={fieldOptions}
+              typeMap={typeMap}
               onChange={(patch) => updateCondition(i, patch)}
               onRemove={() => removeCondition(i)}
             />
@@ -108,6 +164,7 @@ export function RuleEditor({ value, onChange }: RuleEditorProps) {
             <ActionRow
               key={i}
               action={action}
+              fieldOptions={actionFieldOptions}
               onChange={(patch) => updateAction(i, patch)}
               onRemove={() => removeAction(i)}
             />
@@ -124,14 +181,18 @@ export function RuleEditor({ value, onChange }: RuleEditorProps) {
 /** 条件行：字段 + 操作符 + 值。操作符按字段类型智能过滤。 */
 function ConditionRow({
   condition,
+  fieldOptions,
+  typeMap,
   onChange,
   onRemove
 }: {
   condition: RuleCondition;
+  fieldOptions: { value: string; label: string }[];
+  typeMap: Record<string, string>;
   onChange: (patch: Partial<RuleCondition>) => void;
   onRemove: () => void;
 }) {
-  const fieldType = STANDARD_FIELDS.find((f) => f.key === condition.field)?.type ?? 'text';
+  const fieldType = (typeMap[condition.field] ?? 'text') as StandardFieldType;
   const allowedOps = RULE_OPERATORS.filter((o) => o.fieldTypes.includes(fieldType));
   const opOption = RULE_OPERATORS.find((o) => o.value === condition.op);
   const isAmount = fieldType === 'amount';
@@ -141,10 +202,10 @@ function ConditionRow({
       <Select
         style={{ width: '30%' }}
         value={condition.field}
-        options={FIELD_OPTIONS}
+        options={fieldOptions}
         onChange={(field) => {
           // 切换字段时，若当前操作符对新字段类型不适用，回落到首个可用操作符
-          const newType = STANDARD_FIELDS.find((f) => f.key === field)?.type ?? 'text';
+          const newType = (typeMap[field] ?? 'text') as StandardFieldType;
           const stillValid = RULE_OPERATORS.some(
             (o) => o.value === condition.op && o.fieldTypes.includes(newType)
           );
@@ -181,10 +242,12 @@ function ConditionRow({
 /** 动作行：设置字段 = 值。 */
 function ActionRow({
   action,
+  fieldOptions,
   onChange,
   onRemove
 }: {
   action: RuleAction;
+  fieldOptions: Array<{ label: string; options: { value: string; label: string }[] }>;
   onChange: (patch: Partial<RuleAction>) => void;
   onRemove: () => void;
 }) {
@@ -193,8 +256,9 @@ function ActionRow({
       <Select
         style={{ width: '30%' }}
         value={action.field}
-        options={FIELD_OPTIONS}
+        options={fieldOptions}
         onChange={(field) => onChange({ field })}
+        placeholder="选择要设置的字段"
       />
       <Input
         className="sep-fill"
@@ -268,7 +332,9 @@ export function describeRule(data: RuleEditorData): string {
   const actionText =
     data.actions.length > 0
       ? '设置 ' +
-        data.actions.map((a) => `${FIELD_LABEL[a.field] ?? a.field}为"${a.value}"`).join('、')
+        data.actions
+          .map((a) => `${actionFieldLabel(a.field)}为"${a.value}"`)
+          .join('、')
       : '不设置任何字段';
   return `${condText} 时，${actionText}。`;
 }

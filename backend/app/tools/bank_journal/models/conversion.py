@@ -110,6 +110,23 @@ class BankTransaction(Base, IdMixin):
     bank_transaction_id: Mapped[str | None] = mapped_column(String(128))
     receipt_no: Mapped[str | None] = mapped_column(String(128))
     raw_row_json: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    # 公司级自定义扩展字段的中性预分配强类型列（见 CustomField）。
+    # 用户在 UI 把业务字段（如「成本中心」）绑定到某个空闲槽位；运行时零 DDL。
+    # 文本槽 8 个、金额槽 4 个、日期槽 2 个，超出需重新迁移扩容。
+    ext_text_1: Mapped[str | None] = mapped_column(String(255))
+    ext_text_2: Mapped[str | None] = mapped_column(String(255))
+    ext_text_3: Mapped[str | None] = mapped_column(String(255))
+    ext_text_4: Mapped[str | None] = mapped_column(String(255))
+    ext_text_5: Mapped[str | None] = mapped_column(String(255))
+    ext_text_6: Mapped[str | None] = mapped_column(String(255))
+    ext_text_7: Mapped[str | None] = mapped_column(String(255))
+    ext_text_8: Mapped[str | None] = mapped_column(String(255))
+    ext_amount_1: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    ext_amount_2: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    ext_amount_3: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    ext_amount_4: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    ext_date_1: Mapped[date | None] = mapped_column(Date)
+    ext_date_2: Mapped[date | None] = mapped_column(Date)
     row_hash: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

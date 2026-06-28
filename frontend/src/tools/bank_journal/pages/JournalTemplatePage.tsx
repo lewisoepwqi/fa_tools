@@ -1,16 +1,21 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Input, Modal, Select, Table, Typography, message } from 'antd';
+import { Button, Input, Modal, Popconfirm, Select, Space, Switch, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createJournalTemplate, listJournalTemplates } from '../api/journalTemplates';
+import { message } from '../../../components/antdApp';
+import {
+  createJournalTemplate,
+  deleteJournalTemplate,
+  listJournalTemplates,
+  setJournalTemplateStatus
+} from '../api/journalTemplates';
 import {
   JournalColumnsEditor,
   columnsFromBackend,
   columnsToBackend,
   type JournalColumn
 } from '../components/JournalColumnsEditor';
-import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import { FILE_TYPE_OPTIONS } from '../constants';
 import type { JournalTemplate } from '../types/templates';
@@ -94,6 +99,26 @@ export function JournalTemplatePage() {
     }
   };
 
+  const handleToggleStatus = async (id: string, next: 'active' | 'inactive') => {
+    try {
+      await setJournalTemplateStatus(id, next);
+      message.success(next === 'active' ? '已启用' : '已停用');
+      load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '操作失败');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteJournalTemplate(id);
+      message.success('已删除');
+      load();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '删除失败');
+    }
+  };
+
   const columnsDef: ColumnsType<JournalTemplate> = [
     { title: '名称', dataIndex: 'name', key: 'name' },
     {
@@ -104,11 +129,58 @@ export function JournalTemplatePage() {
         return <Typography.Text>{cols.join('、') || '-'}</Typography.Text>;
       }
     },
-    { title: '状态', dataIndex: 'status', key: 'status', render: (_, r) => <StatusTag status={r.status} /> },
+    {
+      title: '状态',
+      key: 'status',
+      width: 80,
+      render: (_, r) => (
+        <Switch
+          size="small"
+          checked={r.status === 'active'}
+          onChange={(checked) => handleToggleStatus(r.id, checked ? 'active' : 'inactive')}
+        />
+      )
+    },
     {
       title: '最新版本',
       key: 'latest_version',
       render: (_, r) => <VersionBadge version={r.latest_version.version_no} />
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 130,
+      fixed: 'right',
+      render: (_, r) => (
+        <Space>
+          <Button
+            size="small"
+            type="link"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/bank-journal/templates/journal/${r.id}`);
+            }}
+          >
+            详情
+          </Button>
+          <Popconfirm
+            title="确定删除该日记账模板？"
+            description="被转换批次引用的模板无法删除。"
+            okText="删除"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            onConfirm={(e) => {
+              e?.stopPropagation();
+              handleDelete(r.id);
+            }}
+            onCancel={(e) => e?.stopPropagation()}
+          >
+            <Button size="small" type="link" danger onClick={(e) => e.stopPropagation()}>
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
+      )
     }
   ];
 
@@ -141,7 +213,7 @@ export function JournalTemplatePage() {
         confirmLoading={creating}
         onOk={handleCreate}
         onCancel={() => setModalOpen(false)}
-        destroyOnClose
+        destroyOnHidden
         width={680}
       >
         <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
