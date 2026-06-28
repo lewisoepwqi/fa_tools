@@ -7,15 +7,18 @@ import {
   Space,
   Spin,
   Steps,
-  Upload,
-  message
+  Upload
 } from 'antd';
 import type { UploadProps } from 'antd';
 import type { RcFile } from 'antd/es/upload';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { message } from '../../../components/antdApp';
 import { uploadBankStatement } from '../../../api/files';
 import { detectBankTemplate } from '../api/bankTemplates';
 import { DetectResultView } from './DetectResultView';
+import { useStandardFields } from './useStandardFields';
+
+const COMPANY_ID = 'company-1';
 
 const { Dragger } = Upload;
 
@@ -64,6 +67,7 @@ export function BankTemplateWizard({
 }: BankTemplateWizardProps) {
   // 步骤：编辑场景跳过上传（步骤 1）
   const firstStep = skipUpload ? 1 : 0;
+  const standardFields = useStandardFields();
   const [current, setCurrent] = useState(firstStep);
   const [form] = Form.useForm();
   const [uploading, setUploading] = useState(false);
@@ -73,18 +77,51 @@ export function BankTemplateWizard({
   const [sampleFileId, setSampleFileId] = useState<string | undefined>(
     initialValues?.sample_file_id
   );
+  // name/bank_name 提升为组件级 state，脱离 Form 生命周期。
+  // 原因：步骤 0 的 <Form> 在切换到后续步骤时被卸载，form.getFieldsValue() 可能拿不到
+  // 已填的 name；编辑流程下 Form 更是从未挂载。改为受控 state 后，handleSave 在任意
+  // 步骤都能稳定读到值，避免 payload 缺 name → 后端 422。
+  const [name, setName] = useState(initialValues?.name ?? '');
+  const [bankName, setBankName] = useState(initialValues?.bank_name ?? '');
+
+  // 编辑场景（skipUpload）：父组件回填的 initialValues 可能在本组件挂载后才到
+  // （详情数据异步加载）。useState 只取初值，故这里同步一次。
+  useEffect(() => {
+    if (skipUpload && initialValues?.detect) {
+      setDetect(initialValues.detect);
+    }
+    if (initialValues?.sample_file_id) {
+      setSampleFileId(initialValues.sample_file_id);
+    }
+    if (initialValues?.name !== undefined) {
+      setName(initialValues.name);
+    }
+    if (initialValues?.bank_name !== undefined) {
+      setBankName(initialValues.bank_name);
+    }
+  }, [skipUpload, initialValues?.detect, initialValues?.sample_file_id, initialValues?.name, initialValues?.bank_name]);
 
   const handleNextFromBasic = async () => {
-    const values = await form.validateFields();
-    form.setFieldsValue(values);
+    // 仍用 Form 做必填校验（保留 rules 体验），但值已同步到 state，不依赖 Form 持久化。
+    try {
+      await form.validateFields();
+    } catch {
+      return;
+    }
     setCurrent(1);
+  };
+
+  // 字段别名就地纠正：detect 是启发式自动识别会认错列名，这里回写到 detect state。
+  // 保存时 handleSave 把 detect 整体提交，无需改保存链路。
+  const handleAliasesChange = (next: Record<string, string>) => {
+    setDetect((prev) => (prev ? { ...prev, field_aliases: next } : prev));
   };
 
   const handleUploadAndDetect = async (file: RcFile) => {
     setUploading(true);
     try {
       const uploaded = await uploadBankStatement(file);
-      const result = await detectBankTemplate(uploaded.id);
+      const result = await detectBankTemplate(uploaded.id, COMPANY_ID);
       setDetect(result);
       setSampleFileId(uploaded.id);
       message.success('已自动识别流水格式，请核对');
@@ -108,14 +145,26 @@ export function BankTemplateWizard({
   };
 
   const handleSave = async () => {
-    const basic = form.getFieldsValue();
-    if (!detect) {
-      message.error('请先上传样本完成识别');
+    // name/bank_name 由组件级 state 持有（不依赖 Form），任意步骤都能稳定读取。
+    if (!name.trim()) {
+      message.error('请输入模板名称');
+      return;
+    }
+    // 类型守卫：detect 必须是完整对象才能提交，否则 amount_mode 等必填字段缺失
+    // 会导致后端 422（amount_mode 是 BankTemplateVersionCreate 必填项）。
+    if (
+      !detect ||
+      !detect.file_type ||
+      !detect.amount_mode ||
+      typeof detect.header_row_index !== 'number' ||
+      typeof detect.data_start_row_index !== 'number'
+    ) {
+      message.error('识别结果不完整，请重新上传样本完成识别');
       return;
     }
     await onSubmit({
-      name: basic.name,
-      bank_name: basic.bank_name,
+      name: name.trim(),
+      bank_name: bankName.trim() || undefined,
       detect,
       sample_file_id: sampleFileId
     });
@@ -135,15 +184,23 @@ export function BankTemplateWizard({
           form={form}
           layout="vertical"
           initialValues={{
-            name: initialValues?.name,
-            bank_name: initialValues?.bank_name
+            name: name,
+            bank_name: bankName
           }}
         >
           <Form.Item name="name" label="模板名称" rules={[{ required: true, message: '请输入模板名称' }]}>
-            <Input placeholder="如：中国银行企业网银流水" />
+            <Input
+              placeholder="如：中国银行企业网银流水"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
           </Form.Item>
           <Form.Item name="bank_name" label="银行名称">
-            <Input placeholder="如：中国银行" />
+            <Input
+              placeholder="如：中国银行"
+              value={bankName}
+              onChange={(e) => setBankName(e.target.value)}
+            />
           </Form.Item>
           <div style={{ textAlign: 'right' }}>
             <Button onClick={onCancel} style={{ marginRight: 8 }}>
@@ -161,7 +218,9 @@ export function BankTemplateWizard({
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
           <Dragger {...uploadProps} disabled={uploading}>
             {uploading ? (
-              <Spin tip="正在识别..." />
+              <Spin tip="正在识别...">
+                <div style={{ padding: 16 }} />
+              </Spin>
             ) : (
               <>
                 <p className="ant-upload-drag-icon">
@@ -173,7 +232,11 @@ export function BankTemplateWizard({
             )}
           </Dragger>
 
-          {detect && <DetectResultView config={detect} />}
+          {detect && <DetectResultView
+            config={detect}
+            onFieldAliasesChange={handleAliasesChange}
+            standardFieldOptions={standardFields.options}
+          />}
 
           <div style={{ textAlign: 'right' }}>
             <Button onClick={() => setCurrent(0)} style={{ marginRight: 8 }}>
@@ -189,7 +252,11 @@ export function BankTemplateWizard({
       {/* 编辑场景的步骤 1（跳过上传）直接展示预填 detect */}
       {current === 1 && skipUpload && detect && (
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <DetectResultView config={detect} />
+          <DetectResultView
+            config={detect}
+            onFieldAliasesChange={handleAliasesChange}
+            standardFieldOptions={standardFields.options}
+          />
           <div style={{ textAlign: 'right' }}>
             <Button onClick={() => setCurrent(0)} style={{ marginRight: 8 }}>
               上一步
@@ -210,7 +277,11 @@ export function BankTemplateWizard({
             message="请核对识别结果，确认无误后保存"
             description="如识别有误，可返回上一步重新上传样本或手动调整。"
           />
-          <DetectResultView config={detect} />
+          <DetectResultView
+            config={detect}
+            onFieldAliasesChange={handleAliasesChange}
+            standardFieldOptions={standardFields.options}
+          />
           <div style={{ textAlign: 'right' }}>
             <Button onClick={() => setCurrent(skipUpload ? 0 : 1)} style={{ marginRight: 8 }}>
               上一步

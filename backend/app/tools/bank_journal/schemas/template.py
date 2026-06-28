@@ -42,6 +42,8 @@ class BankTemplateResponse(BaseModel):
 class BankTemplateDetectRequest(BaseModel):
     source_file_id: str
     sheet_name: str | None = None
+    # 传入后，detect 会合并该公司的自定义扩展字段做表头识别
+    company_id: str | None = None
 
 
 class BankTemplateDetectResponse(BaseModel):

@@ -3,6 +3,7 @@ import {
   Button,
   Card,
   Descriptions,
+  Empty,
   Input,
   Modal,
   Select,
@@ -10,18 +11,19 @@ import {
   Spin,
   Table,
   Tag,
-  Typography,
-  message
+  Typography
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { message } from '../../../components/antdApp';
 import {
   createJournalTemplateVersion,
   getJournalTemplate,
   listJournalTemplateVersions,
   setJournalTemplateStatus
 } from '../api/journalTemplates';
+import { listMappingProfiles } from '../api/mappingProfiles';
 import {
   JournalColumnsEditor,
   columnsFromBackend,
@@ -32,6 +34,7 @@ import { FILE_TYPE_LABEL, FILE_TYPE_OPTIONS } from '../constants';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { JournalTemplate, JournalTemplateVersion } from '../types/templates';
+import type { MappingProfile } from '../types/mapping';
 
 const ACTOR = 'user-1';
 
@@ -40,6 +43,7 @@ export function JournalTemplateDetailPage() {
   const navigate = useNavigate();
   const [data, setData] = useState<JournalTemplate | null>(null);
   const [versions, setVersions] = useState<JournalTemplateVersion[]>([]);
+  const [referencedBy, setReferencedBy] = useState<MappingProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -52,14 +56,20 @@ export function JournalTemplateDetailPage() {
 
   const load = (templateId: string) => {
     setLoading(true);
-    Promise.all([getJournalTemplate(templateId), listJournalTemplateVersions(templateId)])
-      .then(([d, vs]) => {
+    Promise.all([
+      getJournalTemplate(templateId),
+      listJournalTemplateVersions(templateId),
+      listMappingProfiles({ company_journal_template_id: templateId })
+    ])
+      .then(([d, vs, refs]) => {
         setData(d);
         setVersions(vs);
+        setReferencedBy(refs);
       })
       .catch(() => {
         setData(null);
         setVersions([]);
+        setReferencedBy([]);
       })
       .finally(() => setLoading(false));
   };
@@ -205,6 +215,44 @@ export function JournalTemplateDetailPage() {
         </Space>
       </Card>
 
+      <Card className="work-card" title="被引用情况">
+        {referencedBy.length === 0 ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="暂无映射方案引用此日记账模板"
+          >
+            <Button type="primary" onClick={() => navigate('/bank-journal/templates/mapping')}>
+              去新建映射方案
+            </Button>
+          </Empty>
+        ) : (
+          <Table<MappingProfile>
+            rowKey="id"
+            dataSource={referencedBy}
+            pagination={false}
+            size="small"
+            onRow={(record) => ({
+              onClick: () => navigate(`/bank-journal/templates/mapping/${record.id}`),
+              style: { cursor: 'pointer' }
+            })}
+            columns={[
+              { title: '映射方案名称', dataIndex: 'name', key: 'name' },
+              {
+                title: '最新版本',
+                key: 'latest_version',
+                render: (_, r) => <VersionBadge version={r.latest_version.version_no} />
+              },
+              {
+                title: '状态',
+                key: 'status',
+                width: 80,
+                render: (_, r) => <StatusTag status={r.status} />
+              }
+            ]}
+          />
+        )}
+      </Card>
+
       <Modal
         open={editOpen}
         title="编辑日记账模板（创建新版本）"
@@ -213,7 +261,7 @@ export function JournalTemplateDetailPage() {
         confirmLoading={editing}
         onOk={handleEdit}
         onCancel={() => setEditOpen(false)}
-        destroyOnClose
+        destroyOnHidden
         width={680}
       >
         <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>

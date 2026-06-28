@@ -50,3 +50,8 @@ export async function setJournalTemplateStatus(
   );
   return response.data;
 }
+
+/** 软删除日记账模板（被批次引用时后端返回 409）。 */
+export async function deleteJournalTemplate(id: string): Promise<void> {
+  await apiClient.delete(`/api/tools/bank-journal/journal-templates/${id}`);
+}

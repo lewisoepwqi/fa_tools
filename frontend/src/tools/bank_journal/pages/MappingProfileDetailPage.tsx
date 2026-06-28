@@ -8,12 +8,12 @@ import {
   Space,
   Spin,
   Table,
-  Typography,
-  message
+  Typography
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { message } from '../../../components/antdApp';
 import { listBankTemplates } from '../api/bankTemplates';
 import { listJournalTemplates } from '../api/journalTemplates';
 import {
@@ -204,7 +204,7 @@ export function MappingProfileDetailPage() {
         confirmLoading={editing}
         onOk={handleEdit}
         onCancel={() => setEditOpen(false)}
-        destroyOnClose
+        destroyOnHidden
         width={680}
       >
         <div style={{ marginTop: 16 }}>

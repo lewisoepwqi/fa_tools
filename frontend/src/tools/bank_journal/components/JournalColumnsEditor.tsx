@@ -43,7 +43,7 @@ export function JournalColumnsEditor({ value, onChange }: JournalColumnsEditorPr
   return (
     <Space direction="vertical" size={8} style={{ width: '100%' }}>
       <Table<JournalColumn & { key: number }>
-        rowKey={(_, i) => String(i)}
+        rowKey="key"
         dataSource={value.map((c, i) => ({ ...c, key: i }))}
         pagination={false}
         size="small"

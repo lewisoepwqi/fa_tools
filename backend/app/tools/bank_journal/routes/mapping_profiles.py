@@ -6,6 +6,7 @@ from fastapi import status as http_status
 from app.api.deps import DbSession
 from app.core.enums import RecordStatus
 from app.services.audit_service import record_audit_event
+from app.tools.bank_journal.models.conversion import ConversionRun
 from app.tools.bank_journal.models.mapping import MappingProfile, MappingProfileVersion
 from app.tools.bank_journal.schemas.mapping import (
     MappingProfileCreate,
@@ -61,11 +62,27 @@ def create_mapping_profile(
 
 @router.get("", response_model=list[MappingProfileResponse])
 def list_mapping_profiles(
-    db: DbSession, company_id: str | None = None
+    db: DbSession,
+    company_id: str | None = None,
+    bank_template_id: str | None = None,
+    company_journal_template_id: str | None = None,
 ) -> list[MappingProfileResponse]:
+    """列表。
+
+    可选过滤：company_id / bank_template_id / company_journal_template_id。
+    后两者用于模板详情页展示"被哪些映射方案引用"（解耦后的反向关联视图）。
+    """
     query = db.query(MappingProfile)
     if company_id is not None:
         query = query.filter(MappingProfile.company_id == company_id)
+    if bank_template_id is not None:
+        query = query.filter(MappingProfile.bank_template_id == bank_template_id)
+    if company_journal_template_id is not None:
+        query = query.filter(
+            MappingProfile.company_journal_template_id == company_journal_template_id
+        )
+    # 软删除项不在列表/下拉中展示
+    query = query.filter(MappingProfile.status != RecordStatus.DELETED.value)
     out: list[MappingProfileResponse] = []
     for parent in query.all():
         latest = (
@@ -167,6 +184,45 @@ def update_mapping_profile_status(
         after=response.model_dump(),
     )
     return response
+
+
+@router.delete("/{profile_id}", status_code=http_status.HTTP_204_NO_CONTENT)
+def delete_mapping_profile(db: DbSession, profile_id: str) -> None:
+    """软删除映射方案（status→deleted）。引用拦截：被 ConversionRun 引用则 409。"""
+    parent = _get_mapping_profile_or_404(db, profile_id)
+
+    version_ids = [
+        v.id
+        for v in db.query(MappingProfileVersion.id)
+        .filter(MappingProfileVersion.mapping_profile_id == profile_id)
+        .all()
+    ]
+    run_count = (
+        db.query(ConversionRun)
+        .filter(ConversionRun.mapping_profile_version_id.in_(version_ids))
+        .count()
+        if version_ids
+        else 0
+    )
+    if run_count > 0:
+        raise HTTPException(
+            status_code=http_status.HTTP_409_CONFLICT,
+            detail=f"该映射方案已被 {run_count} 个转换批次引用，无法删除（需保留历史可追溯）。",
+        )
+
+    before = _to_response(parent, _latest_mapping_version(db, profile_id))
+    parent.status = RecordStatus.DELETED.value
+    db.commit()
+    db.refresh(parent)
+    record_audit_event(
+        db,
+        company_id=parent.company_id,
+        actor_id=None,
+        action="mapping_profile.deleted",
+        entity_type="mapping_profile",
+        entity_id=profile_id,
+        before=before.model_dump(),
+    )
 
 
 def _get_mapping_profile_or_404(db: DbSession, profile_id: str) -> MappingProfile:

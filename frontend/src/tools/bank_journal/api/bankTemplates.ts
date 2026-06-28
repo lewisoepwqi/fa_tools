@@ -45,6 +45,11 @@ export async function setBankTemplateStatus(id: string, status: 'active' | 'inac
   return response.data;
 }
 
+/** 软删除银行模板（被批次引用时后端返回 409，拦截器会透传 detail）。 */
+export async function deleteBankTemplate(id: string): Promise<void> {
+  await apiClient.delete(`/api/tools/bank-journal/bank-templates/${id}`);
+}
+
 export interface DetectResult {
   file_type: string;
   sheet_name: string;
@@ -56,9 +61,16 @@ export interface DetectResult {
   date_formats: string[];
 }
 
-export async function detectBankTemplate(sourceFileId: string): Promise<DetectResult> {
-  const response = await apiClient.post<DetectResult>('/api/tools/bank-journal/bank-templates/detect', {
-    source_file_id: sourceFileId
-  });
+export async function detectBankTemplate(
+  sourceFileId: string,
+  companyId?: string
+): Promise<DetectResult> {
+  const response = await apiClient.post<DetectResult>(
+    '/api/tools/bank-journal/bank-templates/detect',
+    {
+      source_file_id: sourceFileId,
+      ...(companyId ? { company_id: companyId } : {})
+    }
+  );
   return response.data;
 }

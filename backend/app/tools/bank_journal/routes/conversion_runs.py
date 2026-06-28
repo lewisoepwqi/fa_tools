@@ -7,13 +7,18 @@ from app.core.config import get_settings
 from app.services.audit_service import record_audit_event
 from app.tools.bank_journal.schemas.conversion import (
     ConversionRunCreate,
+    ConversionRunFromConfigCreate,
     ConversionRunListItemResponse,
     ConversionRunResponse,
+    DryRunCreate,
+    DryRunResponse,
 )
 from app.tools.bank_journal.services.conversion_service import (
+    dry_run_conversion,
     get_conversion_run,
     list_conversion_runs,
     run_conversion,
+    run_conversion_from_config,
 )
 
 router = APIRouter(
@@ -37,6 +42,39 @@ def start_conversion_run(
         after=response.model_dump(),
     )
     return response
+
+
+@router.post("/from-config", response_model=ConversionRunResponse)
+def start_conversion_from_config(
+    db: DbSession, payload: ConversionRunFromConfigCreate
+) -> ConversionRunResponse:
+    """P0：用已配置的版本化模板/映射/规则驱动转换。
+
+    与 ``POST /conversion-runs``（内联传 parse_config/mappings/rules）相对：本端点
+    只传配置 ID，服务端从 DB 查最新版本拼装内联参数后执行同一套 parse/preview 逻辑。
+    让用户在四个配置模块里配的内容真正生效。
+    """
+    upload_dir = Path(get_settings().upload_dir)
+    response = run_conversion_from_config(db, payload, upload_dir)
+    record_audit_event(
+        db,
+        company_id=payload.company_id,
+        actor_id=None,
+        action="conversion_run.created_from_config",
+        entity_type="conversion_run",
+        entity_id=response.id,
+        after=response.model_dump(),
+    )
+    return response
+
+
+@router.post("/dry-run", response_model=DryRunResponse)
+def dry_run(
+    db: DbSession, payload: DryRunCreate
+) -> DryRunResponse:
+    """P3：试跑——用配置解析文件并计算预览，但不落库。供保存前即时验证。"""
+    upload_dir = Path(get_settings().upload_dir)
+    return dry_run_conversion(db, payload, upload_dir)
 
 
 @router.get("", response_model=list[ConversionRunListItemResponse])

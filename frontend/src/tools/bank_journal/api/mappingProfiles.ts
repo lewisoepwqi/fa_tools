@@ -1,9 +1,26 @@
 import { apiClient } from '../../../api/client';
 import type { MappingProfile, MappingProfileVersion } from '../types/mapping';
 
-export async function listMappingProfiles(companyId?: string): Promise<MappingProfile[]> {
-  const params = companyId ? { company_id: companyId } : undefined;
-  const response = await apiClient.get<MappingProfile[]>('/api/tools/bank-journal/mapping-profiles', { params });
+/** 过滤参数：用于模板详情页展示"被哪些映射方案引用"等反向关联查询。 */
+export interface MappingProfileFilter {
+  company_id?: string;
+  bank_template_id?: string;
+  company_journal_template_id?: string;
+}
+
+export async function listMappingProfiles(
+  filter: MappingProfileFilter = {}
+): Promise<MappingProfile[]> {
+  const params: Record<string, string> = {};
+  if (filter.company_id) params.company_id = filter.company_id;
+  if (filter.bank_template_id) params.bank_template_id = filter.bank_template_id;
+  if (filter.company_journal_template_id) {
+    params.company_journal_template_id = filter.company_journal_template_id;
+  }
+  const response = await apiClient.get<MappingProfile[]>(
+    '/api/tools/bank-journal/mapping-profiles',
+    { params }
+  );
   return response.data;
 }
 
@@ -53,4 +70,9 @@ export async function setMappingProfileStatus(
     { params: { status } }
   );
   return response.data;
+}
+
+/** 软删除映射方案（被批次引用时后端返回 409）。 */
+export async function deleteMappingProfile(id: string): Promise<void> {
+  await apiClient.delete(`/api/tools/bank-journal/mapping-profiles/${id}`);
 }

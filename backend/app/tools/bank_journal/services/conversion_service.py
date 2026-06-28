@@ -17,17 +17,31 @@ from app.tools.bank_journal.models.conversion import (
     ConversionRunRuleVersion,
     JournalPreviewRow,
 )
+from app.tools.bank_journal.models.mapping import MappingProfile, MappingProfileVersion
+from app.tools.bank_journal.models.rule import Rule, RuleVersion
+from app.tools.bank_journal.models.template import (
+    BankTemplate,
+    BankTemplateVersion,
+    CompanyJournalTemplate,
+    CompanyJournalTemplateVersion,
+)
 from app.tools.bank_journal.schemas.conversion import (
+    BankParseConfig,
     ConversionRunCreate,
+    ConversionRunFromConfigCreate,
     ConversionRunListItemResponse,
     ConversionRunResponse,
     ConversionRunSummary,
+    DryRunCreate,
+    DryRunResponse,
     JournalPreviewRowData,
 )
 from app.tools.bank_journal.schemas.standard import StandardBankTransaction
+from app.tools.bank_journal.services.custom_field_service import load_custom_field_defs
 from app.tools.bank_journal.services.mapping_service import apply_mappings
 from app.tools.bank_journal.services.parser_service import (
     BankTemplateParseConfig,
+    CustomFieldDef,
     parse_bank_rows,
 )
 from app.tools.bank_journal.services.rule_service import apply_rules
@@ -104,6 +118,9 @@ def run_conversion(
     config = payload.bank_parse_config
     amount_mode = AmountMode(config.amount_mode)
 
+    # 加载公司级扩展字段定义（识别 + 填充 + 落库槽位反查复用）
+    custom_defs = load_custom_field_defs(db, payload.company_id)
+
     preview_rows: list[JournalPreviewRowData] = []
     row_index = 1
     parse_failed_count = 0
@@ -127,6 +144,7 @@ def run_conversion(
             amount_mode=amount_mode,
             amount_config=config.amount_config,
             date_formats=config.date_formats,
+            custom_fields=custom_defs,
         )
         parsed_rows = parse_bank_rows(file_path, parse_config)
 
@@ -184,7 +202,7 @@ def run_conversion(
                 continue
 
             transaction = parsed.transaction
-            bank_tx = _build_bank_transaction(run.id, transaction)
+            bank_tx = _build_bank_transaction(run.id, transaction, _slot_map_for(custom_defs))
             db.add(bank_tx)
 
             preview = build_preview_row(
@@ -232,8 +250,320 @@ def run_conversion(
     )
 
 
-def _build_bank_transaction(run_id: str, txn: StandardBankTransaction) -> BankTransaction:
-    return BankTransaction(
+# ---------------------------------------------------------------------------
+# P0：从已配置的版本化模板/映射/规则驱动转换。
+# 解决根因：run_conversion 纯用前端内联参数，用户配置的四个模块与转换链路从未连通。
+# 这里把 DB 里的版本化配置查出来，转成 run_conversion 期望的内联形态后复用它执行。
+# ---------------------------------------------------------------------------
+
+
+def run_conversion_from_config(
+    db: Session, payload: ConversionRunFromConfigCreate, upload_dir: Path
+) -> ConversionRunResponse:
+    """用已配置的模板/映射/规则版本驱动一次转换（落库，记录快照版本 ID）。"""
+    bank_version = _resolve_bank_template_version(db, payload)
+    journal_version = _resolve_journal_template_version(db, payload)
+    mapping_version = _resolve_mapping_profile_version(db, payload)
+    rule_versions = _resolve_rule_versions(db, payload.rule_ids)
+
+    bank_parse_config = _bank_version_to_parse_config(bank_version)
+    mappings = _mapping_version_to_mappings(mapping_version)
+    rules = [_rule_version_to_rule_dict(rv) for rv in rule_versions]
+    required_columns = (
+        list(payload.required_columns)
+        if payload.required_columns
+        else list(journal_version.required_columns_json or [])
+    )
+
+    inline_payload = ConversionRunCreate(
+        company_id=payload.company_id,
+        bank_account_id=payload.bank_account_id,
+        source_file_ids=payload.source_file_ids,
+        bank_parse_config=bank_parse_config,
+        mappings=mappings,
+        rules=rules,
+        required_columns=required_columns,
+        # 快照本次使用的版本 ID，供导出报告/批次详情溯源。
+        bank_template_version_id=bank_version.id,
+        company_journal_template_version_id=journal_version.id,
+        mapping_profile_version_id=mapping_version.id if mapping_version else None,
+    )
+    return run_conversion(db, inline_payload, upload_dir)
+
+
+def dry_run_conversion(
+    db: Session, payload: DryRunCreate, upload_dir: Path
+) -> DryRunResponse:
+    """P3：试跑——用配置 ID 解析文件并计算预览行，但**不落库**（无 ConversionRun/事务）。
+
+    复用与 run_conversion_from_config 相同的配置解析与 parse/preview 逻辑，
+    仅省略所有 DB 写入。供向导/详情页在保存配置前即时验证效果。
+    """
+    bank_version = _resolve_bank_template_version(db, payload)
+    mapping_version = _resolve_mapping_profile_version(db, payload)
+    rule_versions = _resolve_rule_versions(db, payload.rule_ids)
+    amount_mode = AmountMode(bank_version.amount_mode)
+
+    # 通过银行模板反查公司，加载其扩展字段定义（预览/规则/映射要用扩展字段）
+    bank_template = (
+        db.query(BankTemplate)
+        .filter(BankTemplate.id == bank_version.bank_template_id)
+        .first()
+    )
+    custom_defs: list[CustomFieldDef] = []
+    if bank_template is not None and bank_template.company_id:
+        custom_defs = load_custom_field_defs(db, bank_template.company_id)
+
+    field_aliases = dict(bank_version.field_aliases_json or {})
+    amount_config = dict(bank_version.amount_config_json or {})
+    date_formats = list(bank_version.date_formats_json or ["%Y-%m-%d"])
+    selector = bank_version.sheet_selector_json or {}
+    sheet_name = str(selector.get("sheet_name") or "Sheet1")
+    header_row_index = (
+        bank_version.header_row_index if bank_version.header_row_index is not None else 0
+    )
+    data_start_row_index = (
+        bank_version.data_start_row_index if bank_version.data_start_row_index is not None else 1
+    )
+    mappings = _mapping_version_to_mappings(mapping_version)
+    rules = [_rule_version_to_rule_dict(rv) for rv in rule_versions]
+
+    preview_rows: list[JournalPreviewRowData] = []
+    row_index = 1
+    parse_failed_count = 0
+    limit = max(payload.limit, 1)
+
+    for source_file_id in payload.source_file_ids:
+        if len(preview_rows) >= limit:
+            break
+        source = db.query(SourceFile).filter(SourceFile.id == source_file_id).first()
+        if source is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Source file not found: {source_file_id}",
+            )
+        file_path = upload_dir / source.storage_key
+        parse_config = BankTemplateParseConfig(
+            bank_account_id=payload.bank_account_id,
+            source_file_id=source_file_id,
+            file_type=source.file_type,
+            sheet_name=sheet_name,
+            header_row_index=header_row_index,
+            data_start_row_index=data_start_row_index,
+            field_aliases=field_aliases,
+            amount_mode=amount_mode,
+            amount_config=amount_config,
+            date_formats=date_formats,
+            custom_fields=custom_defs,
+        )
+        for parsed in parse_bank_rows(file_path, parse_config):
+            if len(preview_rows) >= limit:
+                break
+            if parsed.transaction is None:
+                preview_rows.append(
+                    JournalPreviewRowData(
+                        row_index=row_index,
+                        output_values={
+                            "_parse_error": parsed.error_message,
+                            "_source_row_index": parsed.source_row_index,
+                        },
+                        status=PreviewStatus.PARSE_FAILED,
+                        exception_codes=list(parsed.parse_errors),
+                        matched_rule_version_ids=[],
+                        rule_trace=[],
+                    )
+                )
+                parse_failed_count += 1
+                row_index += 1
+                continue
+            preview_rows.append(
+                build_preview_row(
+                    parsed.transaction,
+                    mappings,
+                    rules,
+                    [],
+                    row_index,
+                )
+            )
+            row_index += 1
+
+    return DryRunResponse(
+        summary=ConversionRunSummary(
+            total_rows=len(preview_rows),
+            parse_failed_rows=parse_failed_count,
+        ),
+        preview_rows=preview_rows,
+    )
+
+
+def _resolve_bank_template_version(
+    db: Session, payload: ConversionRunFromConfigCreate
+) -> BankTemplateVersion:
+    if payload.bank_template_version_id:
+        v = db.get(BankTemplateVersion, payload.bank_template_version_id)
+    elif payload.bank_template_id:
+        _ensure_parent_active(db, BankTemplate, payload.bank_template_id, "bank_template")
+        v = _latest_version(
+            db, BankTemplateVersion, "bank_template_id", payload.bank_template_id
+        )
+    else:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "bank_template_version_id or bank_template_id required",
+        )
+    if v is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Bank template version not found")
+    return v
+
+
+def _resolve_journal_template_version(
+    db: Session, payload: ConversionRunFromConfigCreate
+) -> CompanyJournalTemplateVersion:
+    if payload.company_journal_template_version_id:
+        v = db.get(CompanyJournalTemplateVersion, payload.company_journal_template_version_id)
+    elif payload.company_journal_template_id:
+        _ensure_parent_active(
+            db, CompanyJournalTemplate, payload.company_journal_template_id, "journal_template"
+        )
+        v = _latest_version(
+            db,
+            CompanyJournalTemplateVersion,
+            "company_journal_template_id",
+            payload.company_journal_template_id,
+        )
+    else:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "company_journal_template_version_id or company_journal_template_id required",
+        )
+    if v is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Journal template version not found")
+    return v
+
+
+def _resolve_mapping_profile_version(
+    db: Session, payload: ConversionRunFromConfigCreate
+) -> MappingProfileVersion | None:
+    if payload.mapping_profile_version_id:
+        v = db.get(MappingProfileVersion, payload.mapping_profile_version_id)
+    elif payload.mapping_profile_id:
+        _ensure_parent_active(
+            db, MappingProfile, payload.mapping_profile_id, "mapping_profile"
+        )
+        v = _latest_version(
+            db, MappingProfileVersion, "mapping_profile_id", payload.mapping_profile_id
+        )
+    else:
+        return None
+    if v is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mapping profile version not found")
+    return v
+
+
+def _resolve_rule_versions(db: Session, rule_ids: list[str]) -> list[RuleVersion]:
+    out: list[RuleVersion] = []
+    for rule_id in rule_ids:
+        _ensure_parent_active(db, Rule, rule_id, "rule")
+        v = _latest_version(db, RuleVersion, "rule_id", rule_id)
+        if v is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"Rule version not found: {rule_id}")
+        out.append(v)
+    return out
+
+
+def _latest_version(db: Session, model: type, fk_col: str, parent_id: str):
+    """取某父实体的最新版本（version_no 倒序首条）。"""
+    column = getattr(model, fk_col)
+    return (
+        db.query(model)
+        .filter(column == parent_id)
+        .order_by(model.version_no.desc())
+        .first()
+    )
+
+
+def _ensure_parent_active(db: Session, model: type, parent_id: str, label: str) -> None:
+    parent = db.get(model, parent_id)
+    if parent is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"{label} not found: {parent_id}")
+    # 停用的配置不应被新批次引用（保守，符合 PRD 版本化/启用约定）。
+    if getattr(parent, "status", "active") != "active":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{label} is not active: {parent_id}")
+
+
+def _bank_version_to_parse_config(v: BankTemplateVersion) -> BankParseConfig:
+    """模板版本字段（带 _json 后缀）→ parse 期望的 BankParseConfig（无后缀）。
+
+    注意 sheet_name 取自 sheet_selector_json.sheet_name（兼容缺失时回落 "Sheet1"）。
+    """
+    selector = v.sheet_selector_json or {}
+    return BankParseConfig(
+        file_type=v.file_type,
+        sheet_name=str(selector.get("sheet_name") or "Sheet1"),
+        header_row_index=v.header_row_index if v.header_row_index is not None else 0,
+        data_start_row_index=(
+            v.data_start_row_index if v.data_start_row_index is not None else 1
+        ),
+        field_aliases=dict(v.field_aliases_json or {}),
+        amount_mode=v.amount_mode,
+        amount_config=dict(v.amount_config_json or {}),
+        date_formats=list(v.date_formats_json or ["%Y-%m-%d"]),
+    )
+
+
+def _mapping_version_to_mappings(
+    v: MappingProfileVersion | None,
+) -> list[dict[str, Any]]:
+    """mappings_json → apply_mappings 期望的 list[{target,type,...}]。
+
+    支持两种存储格式（P1 富模型 + 向后兼容）：
+    - 扁平 {目标列:标准字段}：默认 type='field'。
+    - mappings_json['_advanced']：富模型数组，含 type/source/value/sources 等。
+    """
+    if v is None or not v.mappings_json:
+        return []
+    out: list[dict[str, Any]] = []
+    for target, source in v.mappings_json.items():
+        if target == "_advanced":
+            continue
+        out.append({"target": target, "type": "field", "source": source})
+    advanced = v.mappings_json.get("_advanced") or []
+    if isinstance(advanced, list):
+        for item in advanced:
+            if isinstance(item, dict) and item.get("target"):
+                out.append(dict(item))
+    return out
+
+
+def _rule_version_to_rule_dict(v: RuleVersion) -> dict[str, Any]:
+    """RuleVersion（conditions_json/actions_json.set）→ apply_rules 期望的 rule dict。
+
+    关键差异：存储的 actions_json 是 {set:{field:value}}，而 apply_rules 要求
+    actions 是 list[{field,value}]；conditions 两者都是 {all:[...]} 直接透传。
+    """
+    actions_obj = v.actions_json or {}
+    actions_list = [
+        {"field": field, "value": value} for field, value in (actions_obj.get("set") or {}).items()
+    ]
+    return {
+        "id": v.rule_id,
+        "version_id": v.id,
+        "priority": v.priority if v.priority is not None else 0,
+        "conditions": v.conditions_json or {"all": []},
+        "actions": actions_list,
+        "allow_auto_confirm": v.allow_auto_confirm,
+    }
+
+
+def _slot_map_for(defs: list[CustomFieldDef]) -> dict[str, CustomFieldDef]:
+    """field_key → CustomFieldDef，供 _build_bank_transaction 反查落库槽位。"""
+    return {d.field_key: d for d in defs}
+
+
+def _build_bank_transaction(
+    run_id: str, txn: StandardBankTransaction, slot_map: dict[str, CustomFieldDef] | None = None
+) -> BankTransaction:
+    kwargs: dict[str, Any] = dict(
         id=str(uuid4()),
         conversion_run_id=run_id,
         source_file_id=txn.source_file_id,
@@ -258,6 +588,13 @@ def _build_bank_transaction(run_id: str, txn: StandardBankTransaction) -> BankTr
         receipt_no=txn.receipt_no,
         raw_row_json=txn.raw_row,
     )
+    # 把 extra_fields 按 field_key → slot_key 反查，写入对应预分配列。
+    if slot_map and txn.extra_fields:
+        for field_key, value in txn.extra_fields.items():
+            cf = slot_map.get(field_key)
+            if cf is not None and value is not None:
+                kwargs[cf.slot_key] = value
+    return BankTransaction(**kwargs)
 
 
 def _summary_from_json(raw: dict[str, object] | None) -> ConversionRunSummary:

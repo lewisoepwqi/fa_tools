@@ -64,6 +64,8 @@ def list_bank_templates(db: Session, company_id: str | None = None) -> list[Bank
     query = db.query(BankTemplate)
     if company_id is not None:
         query = query.filter(BankTemplate.company_id == company_id)
+    # 软删除项不在列表/下拉中展示（删除仅置 status=deleted，行与版本保留）
+    query = query.filter(BankTemplate.status != RecordStatus.DELETED.value)
     out: list[BankTemplateResponse] = []
     for parent in query.all():
         latest = (
@@ -81,6 +83,15 @@ def get_bank_template(db: Session, template_id: str) -> BankTemplateResponse:
     parent = _get_bank_template_or_404(db, template_id)
     latest = _latest_bank_template_version(db, template_id)
     return _bank_template_to_response(parent, latest)
+
+
+def soft_delete_bank_template(db: Session, template_id: str):
+    """软删除银行模板（status→deleted）。引用拦截由路由层负责。返回父实体供审计。"""
+    parent = _get_bank_template_or_404(db, template_id)
+    parent.status = RecordStatus.DELETED.value
+    db.commit()
+    db.refresh(parent)
+    return parent
 
 
 def create_bank_template_version(
@@ -207,6 +218,8 @@ def list_journal_templates(
     query = db.query(CompanyJournalTemplate)
     if company_id is not None:
         query = query.filter(CompanyJournalTemplate.company_id == company_id)
+    # 软删除项不在列表/下拉中展示
+    query = query.filter(CompanyJournalTemplate.status != RecordStatus.DELETED.value)
     out: list[CompanyJournalTemplateResponse] = []
     for parent in query.all():
         latest = (
@@ -226,6 +239,15 @@ def get_journal_template(
     parent = _get_journal_template_or_404(db, template_id)
     latest = _latest_journal_template_version(db, template_id)
     return _journal_template_to_response(parent, latest)
+
+
+def soft_delete_journal_template(db: Session, template_id: str):
+    """软删除日记账模板（status→deleted）。引用拦截由路由层负责。返回父实体供审计。"""
+    parent = _get_journal_template_or_404(db, template_id)
+    parent.status = RecordStatus.DELETED.value
+    db.commit()
+    db.refresh(parent)
+    return parent
 
 
 def create_journal_template_version(

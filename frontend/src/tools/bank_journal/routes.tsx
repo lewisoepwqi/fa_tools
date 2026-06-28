@@ -4,6 +4,7 @@ import { BankTemplateDetailPage } from './pages/BankTemplateDetailPage';
 import { BankTemplatePage } from './pages/BankTemplatePage';
 import { ConversionRunDetailPage } from './pages/ConversionRunDetailPage';
 import { ConversionRunListPage } from './pages/ConversionRunListPage';
+import { CustomFieldPage } from './pages/CustomFieldPage';
 import { JournalTemplateDetailPage } from './pages/JournalTemplateDetailPage';
 import { JournalTemplatePage } from './pages/JournalTemplatePage';
 import { MappingProfileDetailPage } from './pages/MappingProfileDetailPage';
@@ -29,7 +30,8 @@ function TemplatesLayout() {
         { key: 'bank', label: '银行流水模板', children: <BankTemplatePage /> },
         { key: 'journal', label: '日记账模板', children: <JournalTemplatePage /> },
         { key: 'mapping', label: '映射方案', children: <MappingProfilePage /> },
-        { key: 'rule', label: '规则', children: <RulePage /> }
+        { key: 'rule', label: '规则', children: <RulePage /> },
+        { key: 'field', label: '标准字段', children: <CustomFieldPage /> }
       ]}
     />
   );
@@ -41,7 +43,7 @@ function TemplatesLayout() {
  */
 export function BankJournalRoutes() {
   return (
-    <Routes>
+      <Routes>
       <Route path="/" element={<UploadPage />} />
       <Route path="/runs" element={<ConversionRunListPage />} />
       <Route path="/runs/:runId" element={<ConversionRunDetailPage />} />
@@ -54,6 +56,7 @@ export function BankJournalRoutes() {
       <Route path="/templates/mapping/:id" element={<MappingProfileDetailPage />} />
       <Route path="/templates/rule" element={<TemplatesLayout />} />
       <Route path="/templates/rule/:id" element={<RuleDetailPage />} />
+      <Route path="/templates/field" element={<TemplatesLayout />} />
     </Routes>
   );
 }

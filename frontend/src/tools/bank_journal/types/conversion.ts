@@ -23,6 +23,10 @@ export interface ConversionRunResponse {
   bank_account_id?: string | null;
   created_at?: string | null;
   completed_at?: string | null;
+  /** P0：本次转换使用的版本化配置快照（from-config 端点填写）。 */
+  bank_template_version_id?: string | null;
+  company_journal_template_version_id?: string | null;
+  mapping_profile_version_id?: string | null;
 }
 
 /** 批次列表项（不含预览行）。 */
