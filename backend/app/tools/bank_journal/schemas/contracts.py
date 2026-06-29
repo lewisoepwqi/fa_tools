@@ -70,7 +70,7 @@ class RuleIn(BaseModel):
 
 
 class _MappingBase(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     target: str
 
 

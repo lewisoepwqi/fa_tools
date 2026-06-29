@@ -49,3 +49,24 @@ def test_mapping_discriminated_union():
         _mapping_adapter.validate_python({"type": "bogus", "target": "x"})  # 未知 type
     with pytest.raises(ValidationError):
         _mapping_adapter.validate_python({"type": "field", "target": "x"})  # field 缺 source
+
+
+def test_mapping_extra_key_ignored_not_rejected():
+    """_advanced 透传向后兼容：带 stale extra 键的 fixed 映射应被接受，序列化后 extra 键消失。"""
+    # 前端在 type 切换为 fixed 后留了 source 残余字段：不能触发 ValidationError
+    result = _mapping_adapter.validate_python(
+        {"type": "fixed", "target": "科目", "value": "x", "source": "stale"}
+    )
+    # extra 键已被 ignore，序列化输出不含 source
+    dumped = result.model_dump()
+    assert dumped["target"] == "科目"
+    assert dumped["value"] == "x"
+    assert "source" not in dumped
+
+    # 未知 type 依然拒绝（discriminator 保护完好）
+    with pytest.raises(ValidationError):
+        _mapping_adapter.validate_python({"type": "bogus", "target": "x", "extra_key": "v"})
+
+    # field 缺 source 依然拒绝（必填字段保护完好）
+    with pytest.raises(ValidationError):
+        _mapping_adapter.validate_python({"type": "field", "target": "x", "extra_key": "v"})

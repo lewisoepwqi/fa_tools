@@ -205,6 +205,64 @@ def test_from_config_400_when_no_template_provided(client, upload_dir) -> None:
     assert response.status_code == 400
 
 
+def test_from_config_tolerates_advanced_stale_key(client, upload_dir) -> None:
+    """回归：_advanced 映射中带残余 extra 键（如 fixed 类型里留了 source）不应 500。
+
+    W2 之前 mappings 是 list[dict[str,Any]]，没有 extra="forbid" 校验；
+    W2 引入 contracts.py 后 _MappingBase extra="forbid" 会把这类历史数据拒掉。
+    修复后改为 extra="ignore"，相同数据应返回 200。
+    """
+    source_file_id = _upload_csv(client)
+    bank_id = _create_bank_template(client)
+    journal_id = _create_journal_template(client)
+
+    # 建映射方案，版本中用 _advanced 存一个 fixed 映射，但携带前端遗留的 source 字段
+    resp = client.post(
+        "/api/tools/bank-journal/mapping-profiles",
+        json={
+            "company_id": "company-1",
+            "name": "含 stale key 的映射方案",
+            "bank_template_id": bank_id,
+            "company_journal_template_id": journal_id,
+            "version": {
+                "mappings_json": {
+                    "日期": "transaction_date",
+                    "金额": "net_amount",
+                    "_advanced": [
+                        # type 已切换为 fixed，但前端未清除 source 字段 ← 触发回归点
+                        {
+                            "type": "fixed",
+                            "target": "科目",
+                            "value": "管理费用",
+                            "source": "stale_residual_key",
+                        }
+                    ],
+                },
+                "created_by": "user-1",
+            },
+        },
+    )
+    assert resp.status_code == 200
+    mapping_id = resp.json()["id"]
+
+    response = client.post(
+        "/api/tools/bank-journal/conversion-runs/from-config",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [source_file_id],
+            "bank_template_id": bank_id,
+            "company_journal_template_id": journal_id,
+            "mapping_profile_id": mapping_id,
+        },
+    )
+
+    # 修复前：ValidationError → 未捕获 → HTTP 500；修复后应 200
+    assert response.status_code == 200, (
+        f"Expected 200 but got {response.status_code}: {response.text}"
+    )
+
+
 def test_from_config_records_audit(client, upload_dir) -> None:
     source_file_id = _upload_csv(client)
     bank_id = _create_bank_template(client)
