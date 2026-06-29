@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -35,7 +36,10 @@ class Rule(Base, IdMixin, TimestampMixin):
 
 class RuleVersion(Base, IdMixin):
     __tablename__ = "rule_versions"
-    __table_args__ = (UniqueConstraint("rule_id", "version_no", name="uq_rule_versions"),)
+    __table_args__ = (
+        UniqueConstraint("rule_id", "version_no", name="uq_rule_versions"),
+        Index("ix_rule_versions_parent_ver", "rule_id", "version_no"),
+    )
 
     rule_id: Mapped[str] = mapped_column(ForeignKey("rules.id"), nullable=False)
     version_no: Mapped[int] = mapped_column(Integer, nullable=False)
