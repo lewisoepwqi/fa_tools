@@ -10,6 +10,7 @@ from app.tools.bank_journal.enums import AmountMode, ExceptionCode, TransactionD
 from app.tools.bank_journal.schemas.standard import StandardBankTransaction
 from app.tools.bank_journal.services.parser_service import (
     BankTemplateParseConfig,
+    _decimal_or_none,
     _read_rows,
     detect_bank_template_config,
     detect_header_row,
@@ -462,3 +463,12 @@ def test_read_rows_decodes_gbk_csv(tmp_path):
     rows = _read_rows(path, "csv", "")
     assert rows[0] == ["日期", "摘要", "金额"]
     assert rows[1][1] == "工资"
+
+
+def test_decimal_cleaning_variants():
+    assert _decimal_or_none("¥1,234.50") == Decimal("1234.50")
+    assert _decimal_or_none("（1,000.00）") == Decimal("-1000.00")  # 全角括号负数
+    assert _decimal_or_none("(1000)") == Decimal("-1000")
+    assert _decimal_or_none("500 DR") == Decimal("-500")
+    assert _decimal_or_none("500 CR") == Decimal("500")
+    assert _decimal_or_none("１２３") == Decimal("123")  # 全角数字

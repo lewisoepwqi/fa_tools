@@ -518,6 +518,11 @@ def _normalize_row(
 DIRECTION_KEYWORDS_CREDIT = {"收入", "贷", "贷方", "入", "credit", "income"}
 DIRECTION_KEYWORDS_DEBIT = {"支出", "借", "借方", "出", "debit", "expense"}
 
+_FULLWIDTH_MAP = str.maketrans(
+    "０１２３４５６７８９．，（）　",
+    "0123456789.,() ",
+)
+
 
 def _parse_amounts(
     normalized_row: dict[str, CellValue],
@@ -662,21 +667,40 @@ def _parse_optional_date(value: CellValue, date_formats: list[str]) -> str | Non
 def _decimal_or_none(value: CellValue) -> Decimal | None:
     if value is None:
         return None
-
     if isinstance(value, Decimal):
         return value
-
     if isinstance(value, (int, float)):
         return Decimal(str(value))
 
-    candidate = _clean_cell(value).replace(",", "")
+    candidate = _clean_cell(value)
+    if not candidate:
+        return None
+
+    # 全角 → 半角(数字、逗号、句点、括号、空格)
+    candidate = candidate.translate(_FULLWIDTH_MAP)
+    negative = False
+    # 会计括号负数:(1,000) / （1,000）
+    if candidate.startswith("(") and candidate.endswith(")"):
+        negative = True
+        candidate = candidate[1:-1]
+    # 方向后缀 DR/CR
+    upper = candidate.upper()
+    if upper.endswith("DR"):
+        negative = True
+        candidate = candidate[:-2]
+    elif upper.endswith("CR"):
+        candidate = candidate[:-2]
+    # 去货币符号、千分位、空白
+    for token in ("¥", "￥", "$", "CNY", "RMB", ",", " "):
+        candidate = candidate.replace(token, "")
     if not candidate:
         return None
 
     try:
-        return Decimal(candidate)
+        result = Decimal(candidate)
     except InvalidOperation as exc:
         raise ValueError(f"Invalid amount: {value}") from exc
+    return -result if negative else result
 
 
 def _clean_cell(value: object) -> str:
