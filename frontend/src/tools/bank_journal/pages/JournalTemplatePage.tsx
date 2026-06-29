@@ -47,10 +47,13 @@ export function JournalTemplatePage() {
       offset: (page - 1) * pageSize,
       company_id: currentCompanyId ?? undefined
     })
-      .then((p) => { setItems(p.items); setTotal(p.total); })
-      .catch(() => setItems([]))
+      .then((p) => { setItems(p.items ?? []); setTotal(p.total ?? 0); })
+      .catch(() => { setItems([]); setTotal(0); })
       .finally(() => setLoading(false));
   };
+
+  // 切换公司时重置页码，避免旧 offset 查新公司导致空表
+  useEffect(() => { setPage(1); }, [currentCompanyId]);
 
   useEffect(() => {
     let active = true;
@@ -61,7 +64,7 @@ export function JournalTemplatePage() {
       company_id: currentCompanyId ?? undefined
     })
       .then((p) => {
-        if (active) { setItems(p.items); setTotal(p.total); }
+        if (active) { setItems(p.items ?? []); setTotal(p.total ?? 0); }
       })
       .catch(() => {
         if (active) setItems([]);

@@ -16,6 +16,9 @@ export function ConversionRunListPage() {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
+  // 切换公司时重置页码，避免旧 offset 查新公司导致空表
+  useEffect(() => { setPage(1); }, [currentCompanyId]);
+
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -25,7 +28,7 @@ export function ConversionRunListPage() {
       company_id: currentCompanyId ?? undefined
     })
       .then((p) => {
-        if (active) { setItems(p.items); setTotal(p.total); }
+        if (active) { setItems(p.items ?? []); setTotal(p.total ?? 0); }
       })
       .catch(() => {
         if (active) setItems([]);
