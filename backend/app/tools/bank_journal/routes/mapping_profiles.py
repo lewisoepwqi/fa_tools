@@ -115,7 +115,7 @@ def list_mapping_profiles(
     # 软删除项不在列表/下拉中展示
     query = query.filter(MappingProfile.status != RecordStatus.DELETED.value)
     total = query.count()
-    parents = query.order_by(MappingProfile.status).offset(offset).limit(limit).all()
+    parents = query.order_by(MappingProfile.created_at.desc()).offset(offset).limit(limit).all()
     if not parents:
         return Page[MappingProfileResponse](items=[], total=total, limit=limit, offset=offset)
     parent_ids = [p.id for p in parents]
