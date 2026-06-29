@@ -11,9 +11,11 @@ def evaluate(node: dict[str, Any], ctx: EvaluationContext) -> bool:
     if not isinstance(node, dict):
         raise ValueError(f"Invalid condition node: {node!r}")
     if not node:
-        return True  # 无条件 = 匹配全部(向后兼容旧空配置)
+        return False  # 无条件 → 不匹配任何行(防止误配的空规则套用全部)
     if "all" in node:
-        return all(evaluate(child, ctx) for child in node["all"])
+        children = node["all"]
+        # 空 all 视为"无真实条件" → 不匹配(而非数学上的 all([])==True)
+        return bool(children) and all(evaluate(child, ctx) for child in children)
     if "any" in node:
         return any(evaluate(child, ctx) for child in node["any"])
     if "not" in node:

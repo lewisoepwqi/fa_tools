@@ -42,9 +42,11 @@ def test_custom_field_condition():
     assert evaluate(node, ctx) is True
 
 
-def test_empty_conditions_match_all_backcompat():
-    assert evaluate({}, _ctx()) is True
-    assert evaluate({"all": []}, _ctx()) is True
+def test_empty_conditions_match_nothing():
+    # 空条件 → 不匹配任何行(防呆:误配/漏填条件的规则不会套用全部)
+    assert evaluate({}, _ctx()) is False
+    assert evaluate({"all": []}, _ctx()) is False
+    assert evaluate({"any": []}, _ctx()) is False
 
 
 def test_unknown_structure_raises_not_match_all():
