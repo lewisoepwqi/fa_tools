@@ -1,3 +1,4 @@
+import csv
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -9,6 +10,7 @@ from app.tools.bank_journal.enums import AmountMode, ExceptionCode, TransactionD
 from app.tools.bank_journal.schemas.standard import StandardBankTransaction
 from app.tools.bank_journal.services.parser_service import (
     BankTemplateParseConfig,
+    _read_rows,
     detect_bank_template_config,
     detect_header_row,
     parse_bank_rows,
@@ -449,3 +451,14 @@ def test_parse_signed_amount_negative_is_debit(tmp_path: Path) -> None:
     assert len(transactions) == 1
     assert transactions[0].direction == TransactionDirection.DEBIT
     assert transactions[0].net_amount == Decimal("-3000.00")
+
+
+def test_read_rows_decodes_gbk_csv(tmp_path):
+    path = tmp_path / "gbk.csv"
+    with path.open("w", encoding="gbk", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["日期", "摘要", "金额"])
+        writer.writerow(["2026-01-01", "工资", "100"])
+    rows = _read_rows(path, "csv", "")
+    assert rows[0] == ["日期", "摘要", "金额"]
+    assert rows[1][1] == "工资"

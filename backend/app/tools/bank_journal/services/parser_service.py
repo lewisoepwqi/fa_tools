@@ -450,13 +450,24 @@ def _detect_date_formats(
 
 
 
+def _read_csv_text(file_path: Path) -> str:
+    """按优先级尝试解码:UTF-8(含 BOM)→ GB18030(GBK/GB2312 超集)。"""
+    raw = file_path.read_bytes()
+    for encoding in ("utf-8-sig", "gb18030"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("Unable to decode CSV: tried utf-8 and gb18030")
+
+
 def _read_rows(path: str | Path, file_type: str, sheet_name: str) -> list[list[CellValue]]:
     file_path = Path(path)
     normalized_type = file_type.lower()
 
     if normalized_type == "csv":
-        with file_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            return [[_clean_cell(cell) for cell in row] for row in csv.reader(handle)]
+        text = _read_csv_text(file_path)
+        return [[_clean_cell(cell) for cell in row] for row in csv.reader(text.splitlines())]
 
     if normalized_type == "xlsx":
         workbook = load_workbook(file_path, read_only=True, data_only=True)
