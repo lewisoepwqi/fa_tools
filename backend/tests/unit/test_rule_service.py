@@ -183,3 +183,44 @@ def test_date_range_lte_does_not_match() -> None:
     )
 
     assert result.matched_rule_version_ids == []
+
+
+# ── Task-4 regression tests ──────────────────────────────────────────────────
+
+
+def _txn(summary="报销款", extra=None):
+    return StandardBankTransaction(
+        transaction_date="2026-01-01",
+        bank_account_id="acc-1",
+        direction=TransactionDirection.DEBIT,
+        net_amount=Decimal("-50"),
+        summary=summary,
+        extra_fields=extra or {},
+        source_file_id="f-1",
+        source_sheet_name="S",
+        source_row_index=2,
+        raw_row={},
+    )
+
+
+def test_any_rule_matches_via_or():
+    rules = [{
+        "id": "r1", "version_id": "v1", "priority": 1, "allow_auto_confirm": False,
+        "conditions": {"any": [
+            {"field": "summary", "op": "contains", "value": "工资"},
+            {"field": "summary", "op": "contains", "value": "报销"},
+        ]},
+        "actions": [{"field": "account", "op": "set", "value": "管理费用"}],
+    }]
+    result = apply_rules(_txn(summary="报销款"), rules)
+    assert result.outputs.get("account") == "管理费用"
+
+
+def test_custom_field_rule_condition_matches():
+    rules = [{
+        "id": "r1", "version_id": "v1", "priority": 1, "allow_auto_confirm": False,
+        "conditions": {"all": [{"field": "cost_center", "op": "eq", "value": "CC-01"}]},
+        "actions": [{"field": "account", "op": "set", "value": "研发费用"}],
+    }]
+    result = apply_rules(_txn(extra={"cost_center": "CC-01"}), rules)
+    assert result.outputs.get("account") == "研发费用"
