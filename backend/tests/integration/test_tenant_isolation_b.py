@@ -650,6 +650,24 @@ def test_list_builtin_overrides_other_company_forbidden(
     assert r.status_code == 403
 
 
+def test_detect_bank_template_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户用他公司 company_id 调用 detect 端点，应返回 403。"""
+    c, db = client_with_db
+    _ensure_company(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.post(
+        "/api/tools/bank-journal/bank-templates/detect",
+        json={
+            "source_file_id": "any-source-file-id",
+            "company_id": "co-B",
+        },
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
 def test_get_journal_template_other_company_forbidden(
     client_with_db, make_user, auth_headers
 ):
