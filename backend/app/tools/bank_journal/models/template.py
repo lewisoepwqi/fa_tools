@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, UniqueConstraint, func, text
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -32,6 +42,7 @@ class BankTemplateVersion(Base, IdMixin):
             "version_no",
             name="uq_bank_template_versions_version",
         ),
+        Index("ix_bank_template_versions_parent_ver", "bank_template_id", "version_no"),
     )
 
     bank_template_id: Mapped[str] = mapped_column(ForeignKey("bank_templates.id"), nullable=False)
@@ -74,6 +85,11 @@ class CompanyJournalTemplateVersion(Base, IdMixin):
             "company_journal_template_id",
             "version_no",
             name="uq_company_journal_template_versions_version",
+        ),
+        Index(
+            "ix_company_journal_template_versions_parent_ver",
+            "company_journal_template_id",
+            "version_no",
         ),
     )
 

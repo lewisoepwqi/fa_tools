@@ -294,7 +294,7 @@ def test_creating_a_bank_template_records_an_audit_event(client) -> None:
             },
         },
     )
-    logs = client.get("/api/audit-logs").json()
+    logs = client.get("/api/audit-logs").json()["items"]
     assert any(log["action"] == "bank_template.created" for log in logs)
 
 
@@ -392,7 +392,7 @@ def test_full_conversion_flow_end_to_end(client) -> None:
     assert "日期" in download.content.decode("utf-8-sig")
 
     # 7. Audit trail captured the full chain
-    logs = client.get("/api/audit-logs").json()
+    logs = client.get("/api/audit-logs").json()["items"]
     actions = {log["action"] for log in logs}
     for expected in {
         "file.uploaded", "conversion_run.created",
@@ -585,6 +585,237 @@ def test_no_orphan_bank_transaction_when_all_rows_fail_preview(client_with_db, t
         f"Expected 0 BankTransaction rows for run {run_id}, got {count}. "
         "Orphan bank_tx rows indicate db.add(bank_tx) was called before build_preview_row."
     )
+
+    get_settings.cache_clear()
+
+
+@pytest.fixture()
+def seeded_run_payload():
+    """Valid ConversionRunCreate payload dict for dirty-input 422 tests."""
+    return {
+        "company_id": "company-1",
+        "bank_account_id": "bank-account-1",
+        "source_file_ids": ["fake-file-id"],
+        "bank_parse_config": {
+            "file_type": "csv",
+            "sheet_name": "Sheet1",
+            "header_row_index": 0,
+            "data_start_row_index": 1,
+            "field_aliases": {},
+            "amount_mode": "income_expense_columns",
+            "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+            "date_formats": ["%Y-%m-%d"],
+        },
+        "mappings": [{"target": "日期", "type": "field", "source": "transaction_date"}],
+        "rules": [
+            {
+                "id": "r1",
+                "version_id": "rv1",
+                "priority": 1,
+                "conditions": {"all": []},
+                "actions": [],
+            }
+        ],
+        "required_columns": [],
+    }
+
+
+def test_unknown_mapping_type_returns_422(client, seeded_run_payload) -> None:
+    payload = seeded_run_payload
+    payload["mappings"] = [{"type": "bogus", "target": "科目"}]
+    resp = client.post("/api/tools/bank-journal/conversion-runs", json=payload)
+    assert resp.status_code == 422
+
+
+def test_invalid_amount_mode_returns_422(client, seeded_run_payload) -> None:
+    payload = seeded_run_payload
+    payload["bank_parse_config"]["amount_mode"] = "not_a_mode"
+    resp = client.post("/api/tools/bank-journal/conversion-runs", json=payload)
+    assert resp.status_code == 422
+
+
+def test_rule_missing_version_id_returns_422(client, seeded_run_payload) -> None:
+    payload = seeded_run_payload
+    payload["rules"] = [{"id": "r1", "priority": 1, "conditions": {"all": []}, "actions": []}]
+    resp = client.post("/api/tools/bank-journal/conversion-runs", json=payload)
+    assert resp.status_code == 422
+
+
+def test_action_without_value_does_not_corrupt_row(client, upload_dir) -> None:
+    """回归测试：action 中无 value 键时规则匹配行不应被降级为 parse_failed。
+
+    ActionIn.value 默认 None；ConversionRunCreate 序列化时 model_dump(exclude_none=True)
+    会省略 value 键。rule_service 原用 action["value"] 直接下标，导致 KeyError，
+    被 conversion_service 的 except-all 捕获后将行错误降级为 parse_failed。
+    修复后改用 action.get("value")，None 是合法的覆盖值，行正常处理。
+
+    匹配条件：summary contains "货款" → 命中 bank_statement_basic.csv 第一行（row_index=0）。
+    第二行 summary="采购款" 不匹配规则 → needs_confirmation（NO_RULE_MATCH），不受影响。
+    """
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    response = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "入账日期": "posting_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "对方户名": "counterparty_name",
+                    "对方账号": "counterparty_account_no",
+                    "摘要": "summary",
+                    "用途": "purpose",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [
+                {"target": "日期", "type": "field", "source": "transaction_date"},
+                {"target": "科目", "type": "rule_output", "source": "account_subject"},
+                {"target": "金额", "type": "field", "source": "net_amount"},
+            ],
+            "rules": [
+                {
+                    "id": "rule-1",
+                    "version_id": "rule-version-1",
+                    "priority": 10,
+                    "conditions": {
+                        "all": [{"field": "summary", "op": "contains", "value": "货款"}]
+                    },
+                    # action has NO "value" key — mirrors ActionIn.model_dump(exclude_none=True)
+                    "actions": [{"field": "account_subject"}],
+                    "allow_auto_confirm": False,
+                }
+            ],
+            "required_columns": [],
+        },
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["preview_rows"]
+    # Row index 1 (CSV data row 1) matches the condition (货款).
+    # Before fix: KeyError on action["value"] is swallowed by except-all → parse_failed.
+    # After fix: action.get("value") returns None → row processed normally → needs_confirmation.
+    matched_row = next(r for r in rows if r["row_index"] == 1)
+    assert matched_row["status"] != "parse_failed", (
+        "Matched row must not be parse_failed — action with no value should not KeyError"
+    )
+    assert matched_row["status"] == "needs_confirmation"
+
+
+def test_preview_rows_pagination(client, upload_dir) -> None:
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+    run = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "摘要": "summary",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [],
+            "rules": [],
+            "required_columns": [],
+        },
+    ).json()
+    run_id = run["id"]
+    full = client.get(
+        f"/api/tools/bank-journal/conversion-runs/{run_id}/preview-rows?limit=1&offset=0"
+    )
+    assert full.status_code == 200
+    body = full.json()
+    assert set(body) == {"items", "total", "limit", "offset"}
+    assert body["limit"] == 1 and body["offset"] == 0
+    assert len(body["items"]) <= 1
+    assert body["total"] >= len(body["items"])
+
+
+def test_preview_rows_limit_capped_at_500(client) -> None:
+    resp = client.get(
+        "/api/tools/bank-journal/conversion-runs/any-run-id/preview-rows?limit=9999"
+    )
+    assert resp.status_code == 422  # 超过上限 500 由 Query(le=500) 拦截
+
+
+def test_conversion_missing_disk_file_returns_404(
+    client_with_db, tmp_path, seeded_run_payload
+) -> None:
+    """DB has SourceFile row but physical file is missing on disk → 404, not 500.
+
+    Critical: uses a real SourceFile DB row (not a non-existent source_file_id).
+    A non-existent id hits the pre-existing 'source not found' 404 and would
+    pass without the new file-exists check — making it a false test.
+    """
+    import os
+    from uuid import uuid4
+
+    from app.core.config import get_settings
+    from app.models.file import SourceFile
+
+    test_client, db = client_with_db
+
+    # Point UPLOAD_DIR at a real temp dir; the ghost file won't be there.
+    uploads = tmp_path / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    get_settings.cache_clear()
+    os.environ["UPLOAD_DIR"] = str(uploads)
+    get_settings.cache_clear()
+
+    # Insert a SourceFile row whose storage_key does NOT exist on disk.
+    sf_id = str(uuid4())
+    db.add(
+        SourceFile(
+            id=sf_id,
+            company_id="company-1",
+            original_filename="ghost.csv",
+            file_type="csv",
+            storage_key=f"{sf_id}.csv",  # file not written to uploads/
+            status="pending",
+        )
+    )
+    db.commit()
+
+    payload = dict(seeded_run_payload)
+    payload["source_file_ids"] = [sf_id]
+    resp = test_client.post("/api/tools/bank-journal/conversion-runs", json=payload)
+    assert resp.status_code == 404
 
     get_settings.cache_clear()
 

@@ -3,7 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from app.tools.bank_journal.enums import ExceptionCode, PreviewStatus
+from app.tools.bank_journal.enums import AmountMode, ExceptionCode, PreviewStatus
+from app.tools.bank_journal.schemas.contracts import MappingIn, RuleIn
 
 
 class JournalPreviewRowData(BaseModel):
@@ -22,7 +23,7 @@ class BankParseConfig(BaseModel):
     header_row_index: int
     data_start_row_index: int
     field_aliases: dict[str, str]
-    amount_mode: str
+    amount_mode: AmountMode
     amount_config: dict[str, str]
     date_formats: list[str]
 
@@ -32,8 +33,8 @@ class ConversionRunCreate(BaseModel):
     bank_account_id: str
     source_file_ids: list[str]
     bank_parse_config: BankParseConfig
-    mappings: list[dict[str, Any]]
-    rules: list[dict[str, Any]]
+    mappings: list[MappingIn]
+    rules: list[RuleIn]
     required_columns: list[str]
     # P0-2: 可选快照本次转换使用的版本化配置 ID（PRD §10.3.3 任意导出文件可
     # 查看使用的模板/映射/规则版本）。缺失则留空（兼容历史内联配置用法）。

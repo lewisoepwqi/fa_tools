@@ -32,7 +32,7 @@ def apply_rules(
         matched_auto_flags.append(bool(rule.get("allow_auto_confirm", False)))
         for action in rule["actions"]:
             field_name = action["field"]
-            value = action["value"]
+            value = action.get("value")
             if field_name in result.outputs and result.outputs[field_name] != value:
                 values = result.conflicts.setdefault(field_name, [result.outputs[field_name]])
                 if value not in values:

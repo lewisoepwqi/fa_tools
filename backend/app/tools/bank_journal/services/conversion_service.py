@@ -38,6 +38,7 @@ from app.tools.bank_journal.schemas.conversion import (
     DryRunResponse,
     JournalPreviewRowData,
 )
+from app.tools.bank_journal.schemas.pagination import Page
 from app.tools.bank_journal.schemas.standard import StandardBankTransaction
 from app.tools.bank_journal.services.custom_field_service import load_custom_field_defs
 from app.tools.bank_journal.services.mapping_service import apply_mappings
@@ -105,6 +106,12 @@ def _preview_status(
 def run_conversion(
     db: Session, payload: ConversionRunCreate, upload_dir: Path
 ) -> ConversionRunResponse:
+    # 契约模型 → dict，喂给现有 domain/service。
+    # by_alias=True: 还原 not_→not（ConditionIn.not_ alias="not"）。
+    # exclude_none=True: 避免空字段（all/any/not/field=None）干扰 evaluate() 的键存在检测。
+    mappings = [m.model_dump(by_alias=True, exclude_none=True) for m in payload.mappings]
+    rules = [r.model_dump(by_alias=True, exclude_none=True) for r in payload.rules]
+
     run = ConversionRun(
         id=str(uuid4()),
         company_id=payload.company_id,
@@ -118,7 +125,7 @@ def run_conversion(
     )
     db.add(run)
 
-    for rule in payload.rules:
+    for rule in rules:
         db.add(
             ConversionRunRuleVersion(
                 id=str(uuid4()),
@@ -167,6 +174,11 @@ def run_conversion(
             )
 
         file_path = upload_dir / source.storage_key
+        if not file_path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Source file missing on disk: {source_file_id}",
+            )
         parse_config = BankTemplateParseConfig(
             bank_account_id=payload.bank_account_id,
             source_file_id=source_file_id,
@@ -246,8 +258,8 @@ def run_conversion(
                 bank_tx.row_hash = row_hash(transaction, key_fields)
                 preview = build_preview_row(
                     transaction,
-                    payload.mappings,
-                    payload.rules,
+                    mappings,
+                    rules,
                     payload.required_columns,
                     row_index,
                 )
@@ -463,6 +475,11 @@ def dry_run_conversion(
                 detail=f"Source file not found: {source_file_id}",
             )
         file_path = upload_dir / source.storage_key
+        if not file_path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Source file missing on disk: {source_file_id}",
+            )
         parse_config = BankTemplateParseConfig(
             bank_account_id=payload.bank_account_id,
             source_file_id=source_file_id,
@@ -769,6 +786,21 @@ def _preview_row_to_data(row: JournalPreviewRow) -> JournalPreviewRowData:
         exception_codes=[ExceptionCode(code) for code in (row.exception_codes_json or [])],
         matched_rule_version_ids=row.matched_rule_versions_json or [],
         rule_trace=_rule_trace_to_list(row.rule_trace_json),
+    )
+
+
+def list_preview_rows(
+    db: Session, run_id: str, limit: int, offset: int
+) -> Page[JournalPreviewRowData]:
+    """分页返回某批次的日记账预览行，按 row_index 升序。"""
+    base = db.query(JournalPreviewRow).filter(JournalPreviewRow.conversion_run_id == run_id)
+    total = base.count()
+    rows = base.order_by(JournalPreviewRow.row_index).offset(offset).limit(limit).all()
+    return Page[JournalPreviewRowData](
+        items=[_preview_row_to_data(r) for r in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
     )
 
 

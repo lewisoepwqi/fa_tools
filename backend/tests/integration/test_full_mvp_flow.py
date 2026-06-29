@@ -222,7 +222,7 @@ def test_full_flow_versioning_snapshot_export_report(client, dirs) -> None:
     assert bad.status_code == 422
 
     # P2-3: 审计记录含 modified / disabled
-    logs = client.get("/api/audit-logs").json()
+    logs = client.get("/api/audit-logs").json()["items"]
     actions = {log["action"] for log in logs}
     assert "bank_template.modified" in actions
     assert "preview_row.confirmed" in actions

@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi import status as http_status
 from pydantic import BaseModel
+from sqlalchemy import func
 
 from app.api.deps import DbSession
 from app.core.enums import RecordStatus
@@ -90,11 +91,30 @@ def list_rules(
         query = query.filter(Rule.scope_id == scope_id)
     # 软删除项不在列表/下拉中展示
     query = query.filter(Rule.status != RecordStatus.DELETED.value)
-    out: list[RuleResponse] = []
-    for parent in query.all():
-        latest = _latest_rule_version(db, parent.id)
-        out.append(_to_response(parent, latest))
-    return out
+    parents = query.all()
+    if not parents:
+        return []
+    parent_ids = [p.id for p in parents]
+    latest_no = (
+        db.query(
+            RuleVersion.rule_id.label("pid"),
+            func.max(RuleVersion.version_no).label("mv"),
+        )
+        .filter(RuleVersion.rule_id.in_(parent_ids))
+        .group_by(RuleVersion.rule_id)
+        .subquery()
+    )
+    versions = (
+        db.query(RuleVersion)
+        .join(
+            latest_no,
+            (RuleVersion.rule_id == latest_no.c.pid)
+            & (RuleVersion.version_no == latest_no.c.mv),
+        )
+        .all()
+    )
+    by_parent = {v.rule_id: v for v in versions}
+    return [_to_response(p, by_parent.get(p.id)) for p in parents]
 
 
 @router.get("/{rule_id}", response_model=RuleResponse)

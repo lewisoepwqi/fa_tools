@@ -111,7 +111,7 @@ def test_bank_template_version_records_audit(client) -> None:
         f"/api/tools/bank-journal/bank-templates/{created['id']}/versions",
         json={"file_type": "csv", "amount_mode": "income_expense_columns", "created_by": "user-1"},
     )
-    logs = client.get("/api/audit-logs").json()
+    logs = client.get("/api/audit-logs").json()["items"]
     assert any(log["action"] == "bank_template.modified" for log in logs)
 
 
@@ -283,7 +283,7 @@ def test_rule_reorder_creates_new_priorities(client) -> None:
     assert latest_b["latest_version"]["priority"] == 1
 
     # 审计记录 rule.priority_changed
-    logs = client.get("/api/audit-logs").json()
+    logs = client.get("/api/audit-logs").json()["items"]
     assert any(log["action"] == "rule.priority_changed" for log in logs)
 
 

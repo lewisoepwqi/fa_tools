@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.api.deps import DbSession
 from app.core.config import get_settings
@@ -12,11 +12,14 @@ from app.tools.bank_journal.schemas.conversion import (
     ConversionRunResponse,
     DryRunCreate,
     DryRunResponse,
+    JournalPreviewRowData,
 )
+from app.tools.bank_journal.schemas.pagination import Page
 from app.tools.bank_journal.services.conversion_service import (
     dry_run_conversion,
     get_conversion_run,
     list_conversion_runs,
+    list_preview_rows,
     run_conversion,
     run_conversion_from_config,
 )
@@ -89,3 +92,14 @@ def list_runs(
 def get_run(db: DbSession, run_id: str) -> ConversionRunResponse:
     """批次详情（含预览行）。不存在则 404。"""
     return get_conversion_run(db, run_id)
+
+
+@router.get("/{run_id}/preview-rows", response_model=Page[JournalPreviewRowData])
+def list_run_preview_rows(
+    db: DbSession,
+    run_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> Page[JournalPreviewRowData]:
+    """分页返回某批次的日记账预览行，按 row_index 升序。"""
+    return list_preview_rows(db, run_id, limit, offset)

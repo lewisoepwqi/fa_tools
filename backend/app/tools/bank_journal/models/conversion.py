@@ -24,7 +24,7 @@ from app.models.common import IdMixin, TimestampMixin
 class ConversionRun(Base, IdMixin):
     __tablename__ = "conversion_runs"
 
-    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     bank_account_id: Mapped[str | None] = mapped_column(ForeignKey("bank_accounts.id"))
     period_start: Mapped[date | None] = mapped_column(Date)
     period_end: Mapped[date | None] = mapped_column(Date)
@@ -56,7 +56,9 @@ class ConversionRun(Base, IdMixin):
 class ConversionRunFile(Base, IdMixin):
     __tablename__ = "conversion_run_files"
 
-    conversion_run_id: Mapped[str] = mapped_column(ForeignKey("conversion_runs.id"), nullable=False)
+    conversion_run_id: Mapped[str] = mapped_column(
+        ForeignKey("conversion_runs.id"), nullable=False, index=True
+    )
     source_file_id: Mapped[str] = mapped_column(ForeignKey("source_files.id"), nullable=False)
     status: Mapped[str] = mapped_column(
         String(32),
@@ -76,7 +78,9 @@ class ConversionRunFile(Base, IdMixin):
 class ConversionRunRuleVersion(Base, IdMixin):
     __tablename__ = "conversion_run_rule_versions"
 
-    conversion_run_id: Mapped[str] = mapped_column(ForeignKey("conversion_runs.id"), nullable=False)
+    conversion_run_id: Mapped[str] = mapped_column(
+        ForeignKey("conversion_runs.id"), nullable=False, index=True
+    )
     rule_version_id: Mapped[str] = mapped_column(ForeignKey("rule_versions.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -88,7 +92,9 @@ class ConversionRunRuleVersion(Base, IdMixin):
 class BankTransaction(Base, IdMixin):
     __tablename__ = "bank_transactions"
 
-    conversion_run_id: Mapped[str] = mapped_column(ForeignKey("conversion_runs.id"), nullable=False)
+    conversion_run_id: Mapped[str] = mapped_column(
+        ForeignKey("conversion_runs.id"), nullable=False, index=True
+    )
     source_file_id: Mapped[str] = mapped_column(ForeignKey("source_files.id"), nullable=False)
     source_sheet_name: Mapped[str | None] = mapped_column(String(255))
     source_row_index: Mapped[int | None] = mapped_column(Integer)
@@ -127,7 +133,7 @@ class BankTransaction(Base, IdMixin):
     ext_amount_4: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     ext_date_1: Mapped[date | None] = mapped_column(Date)
     ext_date_2: Mapped[date | None] = mapped_column(Date)
-    row_hash: Mapped[str | None] = mapped_column(String(128))
+    row_hash: Mapped[str | None] = mapped_column(String(128), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -138,7 +144,9 @@ class BankTransaction(Base, IdMixin):
 class JournalPreviewRow(Base, IdMixin, TimestampMixin):
     __tablename__ = "journal_preview_rows"
 
-    conversion_run_id: Mapped[str] = mapped_column(ForeignKey("conversion_runs.id"), nullable=False)
+    conversion_run_id: Mapped[str] = mapped_column(
+        ForeignKey("conversion_runs.id"), nullable=False, index=True
+    )
     bank_transaction_id: Mapped[str | None] = mapped_column(ForeignKey("bank_transactions.id"))
     row_index: Mapped[int] = mapped_column(Integer, nullable=False)
     output_values_json: Mapped[dict[str, object] | None] = mapped_column(JSON)

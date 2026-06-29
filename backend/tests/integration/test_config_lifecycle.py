@@ -213,5 +213,5 @@ def test_delete_template_referenced_by_mapping_returns_409(client) -> None:
 def test_delete_records_audit(client) -> None:
     bank_id = _create_bank_template(client)
     client.delete(f"/api/tools/bank-journal/bank-templates/{bank_id}")
-    logs = client.get("/api/audit-logs").json()
+    logs = client.get("/api/audit-logs").json()["items"]
     assert any(log["action"] == "bank_template.deleted" for log in logs)
