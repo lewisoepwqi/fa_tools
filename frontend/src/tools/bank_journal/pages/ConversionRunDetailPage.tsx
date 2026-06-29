@@ -448,6 +448,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
             value={statusFilter}
             onChange={(val) => {
               setStatusFilter(val);
+              setSelectedRowKeys([]);
               // 独立形态：状态筛选变化时重置到第 1 页
               if (!runProp) setRowPage(1);
             }}
@@ -491,7 +492,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
                   current: rowPage,
                   pageSize: PAGE_SIZE,
                   total: rowsTotal,
-                  onChange: (page) => setRowPage(page),
+                  onChange: (page) => { setRowPage(page); setSelectedRowKeys([]); },
                   showTotal: (total) => `共 ${total} 行`,
                   showSizeChanger: false
                 }
