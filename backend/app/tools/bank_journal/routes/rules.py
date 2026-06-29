@@ -1,7 +1,7 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi import status as http_status
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -18,6 +18,7 @@ from app.core.permissions import Permission
 from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.models.conversion import ConversionRunRuleVersion
 from app.tools.bank_journal.models.rule import Rule, RuleVersion
+from app.tools.bank_journal.schemas.pagination import Page
 from app.tools.bank_journal.schemas.rule import (
     RuleCreate,
     RuleResponse,
@@ -91,7 +92,7 @@ def create_rule(
 
 @router.get(
     "",
-    response_model=list[RuleResponse],
+    response_model=Page[RuleResponse],
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_rules(
@@ -100,8 +101,10 @@ def list_rules(
     company_id: str | None = None,
     scope_type: str | None = None,
     scope_id: str | None = None,
-) -> list[RuleResponse]:
-    """列表。
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> Page[RuleResponse]:
+    """列表（分页）。
 
     可选过滤：company_id / scope_type(+scope_id)。
     scope 过滤用于模板详情页展示"绑定了哪些规则"（规则用松散 scope_type+scope_id 约定绑定）。
@@ -120,9 +123,10 @@ def list_rules(
         query = query.filter(Rule.scope_id == scope_id)
     # 软删除项不在列表/下拉中展示
     query = query.filter(Rule.status != RecordStatus.DELETED.value)
-    parents = query.all()
+    total = query.count()
+    parents = query.order_by(Rule.status).offset(offset).limit(limit).all()
     if not parents:
-        return []
+        return Page[RuleResponse](items=[], total=total, limit=limit, offset=offset)
     parent_ids = [p.id for p in parents]
     latest_no = (
         db.query(
@@ -143,7 +147,12 @@ def list_rules(
         .all()
     )
     by_parent = {v.rule_id: v for v in versions}
-    return [_to_response(p, by_parent.get(p.id)) for p in parents]
+    return Page[RuleResponse](
+        items=[_to_response(p, by_parent.get(p.id)) for p in parents],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(

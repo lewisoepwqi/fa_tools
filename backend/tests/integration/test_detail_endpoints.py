@@ -390,3 +390,111 @@ def test_conversion_run_snapshots_version_ids(
     items = c.get("/api/tools/bank-journal/conversion-runs", headers=hdrs).json()
     matched = next(item for item in items if item["id"] == created["id"])
     assert matched["mapping_profile_version_id"] == "mpv-1"
+
+
+# ---------------------------------------------------------------------------
+# W5-T3：4 实体列表分页
+# ---------------------------------------------------------------------------
+
+
+def test_bank_templates_list_paginated(client) -> None:
+    """银行模板列表返回 Page 分页信封，limit 截断生效。"""
+    for i in range(3):
+        client.post(
+            "/api/tools/bank-journal/bank-templates",
+            json={
+                "company_id": "company-1",
+                "name": f"分页银行模板{i}",
+                "version": {
+                    "file_type": "csv",
+                    "amount_mode": "income_expense_columns",
+                    "created_by": "user-1",
+                },
+            },
+        )
+    resp = client.get(
+        "/api/tools/bank-journal/bank-templates",
+        params={"limit": 2, "offset": 0},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) >= {"items", "total", "limit", "offset"}
+    assert body["total"] >= 3
+    assert len(body["items"]) == 2
+
+
+def test_journal_templates_list_paginated(client) -> None:
+    """日记账模板列表返回 Page 分页信封，limit 截断生效。"""
+    for i in range(3):
+        client.post(
+            "/api/tools/bank-journal/journal-templates",
+            json={
+                "company_id": "company-1",
+                "name": f"分页日记账模板{i}",
+                "version": {
+                    "file_type": "xlsx",
+                    "columns_json": ["日期"],
+                    "required_columns_json": ["日期"],
+                    "created_by": "user-1",
+                },
+            },
+        )
+    resp = client.get(
+        "/api/tools/bank-journal/journal-templates",
+        params={"limit": 2, "offset": 0},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) >= {"items", "total", "limit", "offset"}
+    assert body["total"] >= 3
+    assert len(body["items"]) == 2
+
+
+def test_mapping_profiles_list_paginated(client) -> None:
+    """映射方案列表返回 Page 分页信封，limit 截断生效。"""
+    for i in range(3):
+        client.post(
+            "/api/tools/bank-journal/mapping-profiles",
+            json={
+                "company_id": "company-1",
+                "name": f"分页映射{i}",
+                "version": {"mappings_json": {"日期": "transaction_date"}, "created_by": "user-1"},
+            },
+        )
+    resp = client.get(
+        "/api/tools/bank-journal/mapping-profiles",
+        params={"limit": 2, "offset": 0},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) >= {"items", "total", "limit", "offset"}
+    assert body["total"] >= 3
+    assert len(body["items"]) == 2
+
+
+def test_rules_list_paginated(client) -> None:
+    """规则列表返回 Page 分页信封，limit 截断生效。"""
+    for i in range(3):
+        client.post(
+            "/api/tools/bank-journal/rules",
+            json={
+                "company_id": "company-1",
+                "name": f"分页规则{i}",
+                "version": {
+                    "priority": 10,
+                    "conditions_json": {"all": []},
+                    "actions_json": {"set": {}},
+                    "allow_auto_confirm": False,
+                    "created_by": "user-1",
+                },
+            },
+        )
+    resp = client.get(
+        "/api/tools/bank-journal/rules",
+        params={"limit": 2, "offset": 0},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) >= {"items", "total", "limit", "offset"}
+    assert body["total"] >= 3
+    assert len(body["items"]) == 2
