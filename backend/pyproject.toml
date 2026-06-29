@@ -23,6 +23,15 @@ dev = [
   "ruff>=0.6.3",
 ]
 
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+# 只把应用包 app 纳入构建，排除顶层的 migrations/tests/scripts，
+# 否则新版 setuptools 的扁平布局自动发现会因多个顶层包而报错。
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
