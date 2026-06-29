@@ -5,7 +5,12 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
-from app.api.deps import CurrentUserDep, DbSession, require
+from app.api.deps import (
+    CurrentUserDep,
+    DbSession,
+    require,
+    require_company_access,
+)
 from app.core.config import get_settings
 from app.core.permissions import Permission
 from app.services.audit_service import audit_ctx, record_audit_event
@@ -46,6 +51,8 @@ def create_export(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversion run not found: {run_id}",
         )
+    # 派生公司写校验：导出依附于批次，按批次公司校验
+    require_company_access(user, run.company_id)
 
     output_dir = Path(get_settings().export_dir)
     export_id = str(uuid4())
@@ -201,10 +208,13 @@ def _build_export_report(
     "/api/tools/bank-journal/exports/{export_id}/download",
     dependencies=[Depends(require(Permission.EXPORT_RUN))],
 )
-def download_export(export_id: str, db: DbSession) -> FileResponse:
+def download_export(
+    export_id: str, db: DbSession, user: CurrentUserDep
+) -> FileResponse:
     export = db.query(Export).filter(Export.id == export_id).first()
     if export is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found")
+    _require_export_company_access(db, user, export)
     path = Path(get_settings().export_dir) / export.storage_key
     if not path.exists():
         raise HTTPException(
@@ -221,11 +231,14 @@ def download_export(export_id: str, db: DbSession) -> FileResponse:
     "/api/tools/bank-journal/exports/{export_id}/report",
     dependencies=[Depends(require(Permission.EXPORT_RUN))],
 )
-def download_export_report(export_id: str, db: DbSession) -> FileResponse:
+def download_export_report(
+    export_id: str, db: DbSession, user: CurrentUserDep
+) -> FileResponse:
     """下载处理报告（PRD §6.9.7）。"""
     export = db.query(Export).filter(Export.id == export_id).first()
     if export is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found")
+    _require_export_company_access(db, user, export)
     if not export.report_storage_key:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Report not available"
@@ -240,3 +253,15 @@ def download_export_report(export_id: str, db: DbSession) -> FileResponse:
         filename=export.report_storage_key,
         media_type="application/json",
     )
+
+
+def _require_export_company_access(db: DbSession, user: CurrentUserDep, export: Export) -> None:
+    """加载导出所属批次 → 按批次公司做访问校验（批次缺失则不在此处改变 404 语义）。"""
+    run = (
+        db.query(ConversionRun)
+        .filter(ConversionRun.id == export.conversion_run_id)
+        .first()
+    )
+    if run is None:
+        return
+    require_company_access(user, run.company_id)

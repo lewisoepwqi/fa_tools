@@ -2,9 +2,15 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
-from app.api.deps import CurrentUserDep, DbSession, require
+from app.api.deps import (
+    CurrentUserDep,
+    DbSession,
+    require,
+    require_company_access,
+)
 from app.core.permissions import Permission
 from app.services.audit_service import audit_ctx, record_audit_event
+from app.tools.bank_journal.models.conversion import ConversionRun, JournalPreviewRow
 from app.tools.bank_journal.schemas.confirmation import (
     ConfirmationRequest,
     ManualAdjustmentRequest,
@@ -31,6 +37,7 @@ def adjust_preview_row(
     user: CurrentUserDep,
     request: Request,
 ) -> dict[str, Any]:
+    _require_row_company_access(db, user, row_id)
     payload.adjusted_by = user.id
     result = record_manual_adjustment(
         db,
@@ -53,6 +60,20 @@ def adjust_preview_row(
     return result
 
 
+def _require_row_company_access(db: DbSession, user: CurrentUserDep, row_id: str) -> None:
+    """加载预览行 → 所属批次 → 按批次公司做写访问校验。
+
+    行/批次不存在时不在此处抛错，交由 service 层保持原有 404 语义（避免 404→403）。
+    """
+    row = db.query(JournalPreviewRow).filter(JournalPreviewRow.id == row_id).first()
+    if row is None:
+        return
+    run = db.query(ConversionRun).filter(ConversionRun.id == row.conversion_run_id).first()
+    if run is None:
+        return
+    require_company_access(user, run.company_id)
+
+
 @router.post(
     "/{row_id}/confirm",
     response_model=dict[str, Any],
@@ -65,6 +86,7 @@ def confirm_preview_row_route(
     user: CurrentUserDep,
     request: Request,
 ) -> dict[str, Any]:
+    _require_row_company_access(db, user, row_id)
     payload.confirmed_by = user.id
     result = confirm_preview_row(db, row_id, payload.confirmed_by, payload.comment)
     record_audit_event(

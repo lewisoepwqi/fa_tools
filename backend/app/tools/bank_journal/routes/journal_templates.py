@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from app.api.deps import (
     CurrentUserDep,
     DbSession,
+    accessible_company_filter,
     require,
     require_company_access,
 )
@@ -57,9 +58,11 @@ def create_journal_template(
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_journal_templates(
-    db: DbSession, company_id: str | None = None
+    db: DbSession, user: CurrentUserDep, company_id: str | None = None
 ) -> list[CompanyJournalTemplateResponse]:
-    return template_service.list_journal_templates(db, company_id)
+    return template_service.list_journal_templates(
+        db, company_id, accessible=accessible_company_filter(user)
+    )
 
 
 @router.get(

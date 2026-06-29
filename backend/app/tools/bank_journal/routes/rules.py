@@ -9,6 +9,7 @@ from sqlalchemy import func
 from app.api.deps import (
     CurrentUserDep,
     DbSession,
+    accessible_company_filter,
     require,
     require_company_access,
 )
@@ -95,6 +96,7 @@ def create_rule(
 )
 def list_rules(
     db: DbSession,
+    user: CurrentUserDep,
     company_id: str | None = None,
     scope_type: str | None = None,
     scope_id: str | None = None,
@@ -108,6 +110,10 @@ def list_rules(
     query = db.query(Rule)
     if company_id is not None:
         query = query.filter(Rule.company_id == company_id)
+    # 租户收窄：accessible 非 None 时仅返回可访问公司的行
+    accessible = accessible_company_filter(user)
+    if accessible is not None:
+        query = query.filter(Rule.company_id.in_(accessible))
     if scope_type is not None:
         query = query.filter(Rule.scope_type == scope_type)
     if scope_id is not None:
@@ -336,7 +342,9 @@ def reorder_rules(
     """
     updated: list[dict[str, Any]] = []
     for item in payload.items:
-        _get_rule_or_404(db, item.rule_id)  # 校验规则存在
+        parent = _get_rule_or_404(db, item.rule_id)  # 校验规则存在
+        # 派生公司写校验：reorder 按 rule_id 携带，逐条校验其公司可访问
+        require_company_access(user, parent.company_id)
         before_latest = _latest_rule_version(db, item.rule_id)
         if before_latest is None:
             raise HTTPException(

@@ -2,8 +2,15 @@
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import CurrentUserDep, DbSession, require, require_company_access
+from app.api.deps import (
+    CurrentUserDep,
+    DbSession,
+    accessible_company_filter,
+    require,
+    require_company_access,
+)
 from app.core.permissions import Permission
+from app.tools.bank_journal.models.custom_field import CustomField
 from app.tools.bank_journal.schemas.custom_field import (
     BuiltinFieldOverrideResponse,
     BuiltinFieldOverrideUpsert,
@@ -33,9 +40,11 @@ def get_standard_schema(db: DbSession, company_id: str) -> StandardSchemaRespons
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_custom_fields(
-    db: DbSession, company_id: str | None = None
+    db: DbSession, user: CurrentUserDep, company_id: str | None = None
 ) -> list[CustomFieldResponse]:
-    return custom_field_service.list_custom_fields(db, company_id)
+    return custom_field_service.list_custom_fields(
+        db, company_id, accessible=accessible_company_filter(user)
+    )
 
 
 @router.post(
@@ -58,8 +67,9 @@ def create_custom_field(
     dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
 )
 def update_custom_field(
-    db: DbSession, field_id: str, payload: CustomFieldUpdate
+    db: DbSession, user: CurrentUserDep, field_id: str, payload: CustomFieldUpdate
 ) -> CustomFieldResponse:
+    _require_field_company_access(db, user, field_id)
     return custom_field_service.update_custom_field(db, field_id, payload)
 
 
@@ -68,8 +78,17 @@ def update_custom_field(
     status_code=204,
     dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
 )
-def delete_custom_field(db: DbSession, field_id: str) -> None:
+def delete_custom_field(db: DbSession, user: CurrentUserDep, field_id: str) -> None:
+    _require_field_company_access(db, user, field_id)
     custom_field_service.delete_custom_field(db, field_id)
+
+
+def _require_field_company_access(db: DbSession, user: CurrentUserDep, field_id: str) -> None:
+    """加载扩展字段并按其公司做写访问校验（不存在则保持 404 由 service 抛出）。"""
+    cf = db.query(CustomField).filter(CustomField.id == field_id).first()
+    if cf is None:
+        return  # 交由 service 层 _get_or_404 抛 404，避免把 404 变 403
+    require_company_access(user, cf.company_id)
 
 
 # ---------------------------------------------------------------------------

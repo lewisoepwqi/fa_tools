@@ -7,6 +7,7 @@ from sqlalchemy import func
 from app.api.deps import (
     CurrentUserDep,
     DbSession,
+    accessible_company_filter,
     require,
     require_company_access,
 )
@@ -85,6 +86,7 @@ def create_mapping_profile(
 )
 def list_mapping_profiles(
     db: DbSession,
+    user: CurrentUserDep,
     company_id: str | None = None,
     bank_template_id: str | None = None,
     company_journal_template_id: str | None = None,
@@ -97,6 +99,10 @@ def list_mapping_profiles(
     query = db.query(MappingProfile)
     if company_id is not None:
         query = query.filter(MappingProfile.company_id == company_id)
+    # 租户收窄：accessible 非 None 时仅返回可访问公司的行
+    accessible = accessible_company_filter(user)
+    if accessible is not None:
+        query = query.filter(MappingProfile.company_id.in_(accessible))
     if bank_template_id is not None:
         query = query.filter(MappingProfile.bank_template_id == bank_template_id)
     if company_journal_template_id is not None:

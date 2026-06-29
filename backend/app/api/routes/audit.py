@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import DbSession, require
+from app.api.deps import CurrentUserDep, DbSession, accessible_company_filter, require
 from app.core.permissions import Permission
 from app.models.audit import AuditLog
 from app.schemas.audit import AuditLogResponse
@@ -16,10 +16,17 @@ router = APIRouter(prefix="/api/audit-logs", tags=["audit"])
 )
 def list_audit_logs(
     db: DbSession,
+    user: CurrentUserDep,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> Page[AuditLogResponse]:
-    base = db.query(AuditLog).order_by(AuditLog.created_at.desc())
+    base = db.query(AuditLog)
+    # 租户收窄：scoped 用户（accessible 非 None）仅见本公司审计行。
+    # company_id 为 NULL 的行属平台级（如登录等），仅跨公司角色（accessible 为 None）可见。
+    accessible = accessible_company_filter(user)
+    if accessible is not None:
+        base = base.filter(AuditLog.company_id.in_(accessible))
+    base = base.order_by(AuditLog.created_at.desc())
     total = base.count()
     rows = base.offset(offset).limit(limit).all()
     items = [

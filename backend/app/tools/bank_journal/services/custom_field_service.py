@@ -68,11 +68,16 @@ def _to_response(cf: CustomField) -> CustomFieldResponse:
 
 
 def list_custom_fields(
-    db: Session, company_id: str | None = None
+    db: Session,
+    company_id: str | None = None,
+    accessible: set[str] | None = None,
 ) -> list[CustomFieldResponse]:
     query = db.query(CustomField)
     if company_id is not None:
         query = query.filter(CustomField.company_id == company_id)
+    # 租户收窄：accessible 非 None 时仅返回可访问公司的行
+    if accessible is not None:
+        query = query.filter(CustomField.company_id.in_(accessible))
     query = query.filter(CustomField.status != RecordStatus.DELETED.value)
     return [_to_response(r) for r in query.all()]
 
