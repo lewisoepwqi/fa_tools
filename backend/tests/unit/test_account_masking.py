@@ -83,6 +83,28 @@ def test_counterparty_account_no_none_stays_none() -> None:
     assert result["对方账号"] is None
 
 
+def test_concat_mapping_masks_account_source() -> None:
+    """concat 映射中包含 counterparty_account_no 时，拼接结果也应脱敏。"""
+    txn = _txn(counterparty_name="工行", counterparty_account_no="6222021234567890")
+    mappings = [
+        {
+            "target": "对方账号拼接",
+            "type": "concat",
+            "separator": "",
+            "sources": ["counterparty_name", "counterparty_account_no"],
+        },
+    ]
+
+    result = apply_mappings(txn, mappings, rule_outputs={})
+
+    # 账号部分应为脱敏值，对方名称保持明文
+    assert "****7890" in result["对方账号拼接"], (
+        f"期望 concat 输出包含 ****7890，实际得到 {result['对方账号拼接']!r}"
+    )
+    assert "6222021234567890" not in result["对方账号拼接"], "concat 输出中出现了明文账号"
+    assert "工行" in result["对方账号拼接"], "对方名称不应被遮掩"
+
+
 def test_other_fields_not_affected_by_masking() -> None:
     """其他字段（摘要、对方户名）不受账号脱敏影响。"""
     txn = _txn()

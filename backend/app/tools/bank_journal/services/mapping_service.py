@@ -51,6 +51,9 @@ def apply_mappings(
                         f"Unknown concat mapping source for target {target}: {source}"
                     )
                 source_value = ctx.get(source)
+                # 敏感字段在 concat 输出阶段同样脱敏，与 field 分支保持一致
+                if source in _MASKED_FIELDS:
+                    source_value = mask_account(source_value)
                 if source_value is not None and source_value != "":
                     parts.append(str(source_value))
             value = separator.join(parts)
