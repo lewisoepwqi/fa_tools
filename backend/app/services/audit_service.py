@@ -132,3 +132,15 @@ def record_audit_event(
         )
     )
     db.commit()
+
+
+def audit_ctx(request) -> dict:
+    """从请求对象提取 ip_address 和 user_agent，供路由传入审计记录。
+
+    处理 request.client 为 None 的情况（如测试或某些代理配置）。
+    """
+    client = getattr(request, "client", None)
+    return {
+        "ip_address": getattr(client, "host", None) if client else None,
+        "user_agent": request.headers.get("user-agent"),
+    }
