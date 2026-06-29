@@ -587,3 +587,63 @@ def test_no_orphan_bank_transaction_when_all_rows_fail_preview(client_with_db, t
     )
 
     get_settings.cache_clear()
+
+
+def test_balance_discontinuity_flagged(client, upload_dir) -> None:
+    """余额跳变行应携带 BALANCE_DISCONTINUITY 异常码，连续行不应携带。"""
+    # 行1: income=500, balance=1500 → 首行不判
+    # 行2: income=300, balance=2300 → 预期 1500+300=1800，实际 2300 → 跳变
+    # 行3: income=100, balance=2400 → 2300+100=2400 → 连续（基准更新为前行实际值）
+    csv_bytes = (
+        "交易日期,收入,支出,余额,摘要,流水号\n"
+        "2026-01-01,500.00,,1500.00,货款,TXN-BAL-1\n"
+        "2026-01-02,300.00,,2300.00,货款,TXN-BAL-2\n"
+        "2026-01-03,100.00,,2400.00,货款,TXN-BAL-3\n"
+    ).encode()
+
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("balance_jump.csv", csv_bytes, "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    response = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "摘要": "summary",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [],
+            "rules": [],
+            "required_columns": [],
+        },
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["preview_rows"]
+    assert len(rows) == 3
+
+    codes_row0 = rows[0]["exception_codes"]
+    codes_row1 = rows[1]["exception_codes"]
+    codes_row2 = rows[2]["exception_codes"]
+
+    assert "BALANCE_DISCONTINUITY" not in codes_row0, "首行不应标注余额跳变"
+    assert "BALANCE_DISCONTINUITY" in codes_row1, "第二行余额跳变应被标注"
+    assert "BALANCE_DISCONTINUITY" not in codes_row2, "第三行余额连续不应标注"

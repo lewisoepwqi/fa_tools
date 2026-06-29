@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.file import SourceFile
+from app.tools.bank_journal.domain.balance import check_balance_continuity
 from app.tools.bank_journal.domain.dedup import mark_duplicates, row_hash
 from app.tools.bank_journal.enums import AmountMode, ExceptionCode, PreviewStatus
 from app.tools.bank_journal.models.conversion import (
@@ -181,6 +182,9 @@ def run_conversion(
             )
         )
 
+        # 本文件的成功行追踪（余额连续性校验按文件隔离）。
+        file_success_entries: list[tuple[BankTransaction, JournalPreviewRow, int]] = []
+
         for parsed in parsed_rows:
             if parsed.transaction is None:
                 # P1-1: 解析失败行——不构造 bank_transaction（无标准化数据），
@@ -285,8 +289,28 @@ def run_conversion(
             db.add(preview_db_row)
             preview_data = preview.model_copy(update={"id": preview_id})
             preview_rows.append(preview_data)
-            success_entries.append((bank_tx, preview_db_row, len(preview_rows) - 1))
+            pr_idx = len(preview_rows) - 1
+            success_entries.append((bank_tx, preview_db_row, pr_idx))
+            file_success_entries.append((bank_tx, preview_db_row, pr_idx))
             row_index += 1
+
+        # 余额连续性校验（按本文件 source_row_index 升序，隔离于其他文件）。
+        if file_success_entries:
+            file_success_entries.sort(key=lambda e: e[0].source_row_index)
+            balance_rows = [(bt.balance, bt.net_amount) for bt, _, _ in file_success_entries]
+            flags = check_balance_continuity(balance_rows)
+            for (_, preview_db_row, pr_idx), flag in zip(
+                file_success_entries, flags, strict=True
+            ):
+                if flag:
+                    ec_str = ExceptionCode.BALANCE_DISCONTINUITY.value
+                    existing_json = list(preview_db_row.exception_codes_json or [])
+                    if ec_str not in existing_json:
+                        existing_json.append(ec_str)
+                        preview_db_row.exception_codes_json = existing_json
+                    pdata = preview_rows[pr_idx]
+                    if ExceptionCode.BALANCE_DISCONTINUITY not in pdata.exception_codes:
+                        pdata.exception_codes.append(ExceptionCode.BALANCE_DISCONTINUITY)
 
     # 批末去重标注：批内重复 + 历史重复。
     if success_entries:

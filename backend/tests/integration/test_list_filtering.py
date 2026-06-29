@@ -95,8 +95,12 @@ def test_list_mappings_filter_by_bank_template(client) -> None:
     bank_a = _create_bank_template(client, "中行A")
     bank_b = _create_bank_template(client, "建行B")
     journal = _create_journal_template(client)
-    m1 = _create_mapping(client, bank_template_id=bank_a, journal_template_id=journal, name="映射A")
-    _m2 = _create_mapping(client, bank_template_id=bank_b, journal_template_id=journal, name="映射B")
+    m1 = _create_mapping(
+        client, bank_template_id=bank_a, journal_template_id=journal, name="映射A"
+    )
+    _m2 = _create_mapping(
+        client, bank_template_id=bank_b, journal_template_id=journal, name="映射B"
+    )
 
     listed = client.get(
         "/api/tools/bank-journal/mapping-profiles", params={"bank_template_id": bank_a}
@@ -108,8 +112,12 @@ def test_list_mappings_filter_by_journal_template(client) -> None:
     bank = _create_bank_template(client)
     journal_a = _create_journal_template(client, "日记账A")
     journal_b = _create_journal_template(client, "日记账B")
-    m1 = _create_mapping(client, bank_template_id=bank, journal_template_id=journal_a, name="映射A")
-    _m2 = _create_mapping(client, bank_template_id=bank, journal_template_id=journal_b, name="映射B")
+    m1 = _create_mapping(
+        client, bank_template_id=bank, journal_template_id=journal_a, name="映射A"
+    )
+    _m2 = _create_mapping(
+        client, bank_template_id=bank, journal_template_id=journal_b, name="映射B"
+    )
 
     listed = client.get(
         "/api/tools/bank-journal/mapping-profiles",
@@ -135,7 +143,9 @@ def test_list_mappings_no_filter_returns_all(client) -> None:
     """不带过滤参数时行为不变：返回全部（含未绑定）。"""
     bank = _create_bank_template(client)
     journal = _create_journal_template(client)
-    _bound = _create_mapping(client, bank_template_id=bank, journal_template_id=journal, name="绑定")
+    _bound = _create_mapping(
+        client, bank_template_id=bank, journal_template_id=journal, name="绑定"
+    )
     _unbound = _create_mapping(client, name="未绑定")
 
     listed = client.get("/api/tools/bank-journal/mapping-profiles").json()
