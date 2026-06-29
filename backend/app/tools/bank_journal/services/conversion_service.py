@@ -174,6 +174,11 @@ def run_conversion(
             )
 
         file_path = upload_dir / source.storage_key
+        if not file_path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Source file missing on disk: {source_file_id}",
+            )
         parse_config = BankTemplateParseConfig(
             bank_account_id=payload.bank_account_id,
             source_file_id=source_file_id,
@@ -470,6 +475,11 @@ def dry_run_conversion(
                 detail=f"Source file not found: {source_file_id}",
             )
         file_path = upload_dir / source.storage_key
+        if not file_path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Source file missing on disk: {source_file_id}",
+            )
         parse_config = BankTemplateParseConfig(
             bank_account_id=payload.bank_account_id,
             source_file_id=source_file_id,

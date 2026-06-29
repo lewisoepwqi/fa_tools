@@ -774,6 +774,52 @@ def test_preview_rows_limit_capped_at_500(client) -> None:
     assert resp.status_code == 422  # 超过上限 500 由 Query(le=500) 拦截
 
 
+def test_conversion_missing_disk_file_returns_404(
+    client_with_db, tmp_path, seeded_run_payload
+) -> None:
+    """DB has SourceFile row but physical file is missing on disk → 404, not 500.
+
+    Critical: uses a real SourceFile DB row (not a non-existent source_file_id).
+    A non-existent id hits the pre-existing 'source not found' 404 and would
+    pass without the new file-exists check — making it a false test.
+    """
+    import os
+    from uuid import uuid4
+
+    from app.core.config import get_settings
+    from app.models.file import SourceFile
+
+    test_client, db = client_with_db
+
+    # Point UPLOAD_DIR at a real temp dir; the ghost file won't be there.
+    uploads = tmp_path / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    get_settings.cache_clear()
+    os.environ["UPLOAD_DIR"] = str(uploads)
+    get_settings.cache_clear()
+
+    # Insert a SourceFile row whose storage_key does NOT exist on disk.
+    sf_id = str(uuid4())
+    db.add(
+        SourceFile(
+            id=sf_id,
+            company_id="company-1",
+            original_filename="ghost.csv",
+            file_type="csv",
+            storage_key=f"{sf_id}.csv",  # file not written to uploads/
+            status="pending",
+        )
+    )
+    db.commit()
+
+    payload = dict(seeded_run_payload)
+    payload["source_file_ids"] = [sf_id]
+    resp = test_client.post("/api/tools/bank-journal/conversion-runs", json=payload)
+    assert resp.status_code == 404
+
+    get_settings.cache_clear()
+
+
 def test_balance_discontinuity_flagged(client, upload_dir) -> None:
     """余额跳变行应携带 BALANCE_DISCONTINUITY 异常码，连续行不应携带。"""
     # 行1: income=500, balance=1500 → 首行不判
