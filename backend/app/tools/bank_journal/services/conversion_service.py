@@ -105,6 +105,12 @@ def _preview_status(
 def run_conversion(
     db: Session, payload: ConversionRunCreate, upload_dir: Path
 ) -> ConversionRunResponse:
+    # 契约模型 → dict，喂给现有 domain/service。
+    # by_alias=True: 还原 not_→not（ConditionIn.not_ alias="not"）。
+    # exclude_none=True: 避免空字段（all/any/not/field=None）干扰 evaluate() 的键存在检测。
+    mappings = [m.model_dump(by_alias=True, exclude_none=True) for m in payload.mappings]
+    rules = [r.model_dump(by_alias=True, exclude_none=True) for r in payload.rules]
+
     run = ConversionRun(
         id=str(uuid4()),
         company_id=payload.company_id,
@@ -118,7 +124,7 @@ def run_conversion(
     )
     db.add(run)
 
-    for rule in payload.rules:
+    for rule in rules:
         db.add(
             ConversionRunRuleVersion(
                 id=str(uuid4()),
@@ -246,8 +252,8 @@ def run_conversion(
                 bank_tx.row_hash = row_hash(transaction, key_fields)
                 preview = build_preview_row(
                     transaction,
-                    payload.mappings,
-                    payload.rules,
+                    mappings,
+                    rules,
                     payload.required_columns,
                     row_index,
                 )

@@ -589,6 +589,58 @@ def test_no_orphan_bank_transaction_when_all_rows_fail_preview(client_with_db, t
     get_settings.cache_clear()
 
 
+@pytest.fixture()
+def seeded_run_payload():
+    """Valid ConversionRunCreate payload dict for dirty-input 422 tests."""
+    return {
+        "company_id": "company-1",
+        "bank_account_id": "bank-account-1",
+        "source_file_ids": ["fake-file-id"],
+        "bank_parse_config": {
+            "file_type": "csv",
+            "sheet_name": "Sheet1",
+            "header_row_index": 0,
+            "data_start_row_index": 1,
+            "field_aliases": {},
+            "amount_mode": "income_expense_columns",
+            "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+            "date_formats": ["%Y-%m-%d"],
+        },
+        "mappings": [{"target": "日期", "type": "field", "source": "transaction_date"}],
+        "rules": [
+            {
+                "id": "r1",
+                "version_id": "rv1",
+                "priority": 1,
+                "conditions": {"all": []},
+                "actions": [],
+            }
+        ],
+        "required_columns": [],
+    }
+
+
+def test_unknown_mapping_type_returns_422(client, seeded_run_payload) -> None:
+    payload = seeded_run_payload
+    payload["mappings"] = [{"type": "bogus", "target": "科目"}]
+    resp = client.post("/api/tools/bank-journal/conversion-runs", json=payload)
+    assert resp.status_code == 422
+
+
+def test_invalid_amount_mode_returns_422(client, seeded_run_payload) -> None:
+    payload = seeded_run_payload
+    payload["bank_parse_config"]["amount_mode"] = "not_a_mode"
+    resp = client.post("/api/tools/bank-journal/conversion-runs", json=payload)
+    assert resp.status_code == 422
+
+
+def test_rule_missing_version_id_returns_422(client, seeded_run_payload) -> None:
+    payload = seeded_run_payload
+    payload["rules"] = [{"id": "r1", "priority": 1, "conditions": {"all": []}, "actions": []}]
+    resp = client.post("/api/tools/bank-journal/conversion-runs", json=payload)
+    assert resp.status_code == 422
+
+
 def test_balance_discontinuity_flagged(client, upload_dir) -> None:
     """余额跳变行应携带 BALANCE_DISCONTINUITY 异常码，连续行不应携带。"""
     # 行1: income=500, balance=1500 → 首行不判
