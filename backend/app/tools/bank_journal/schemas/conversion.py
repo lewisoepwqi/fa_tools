@@ -82,6 +82,9 @@ class DryRunResponse(BaseModel):
 class ConversionRunSummary(BaseModel):
     total_rows: int = 0
     parse_failed_rows: int = 0
+    auto_confirmed_rows: int = 0
+    needs_confirmation_rows: int = 0
+    conflict_rows: int = 0
 
 
 class ConversionRunListItemResponse(BaseModel):

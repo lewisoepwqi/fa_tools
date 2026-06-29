@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -364,16 +365,26 @@ def run_conversion(
             pdata.status = PreviewStatus.NEEDS_CONFIRMATION
             preview_db_row.status = PreviewStatus.NEEDS_CONFIRMATION
 
+    status_counts: Counter[str] = Counter(p.status for p in preview_rows)
     run.summary_json = {
         "total_rows": len(preview_rows),
         "parse_failed_rows": parse_failed_count,
+        "auto_confirmed_rows": status_counts.get(PreviewStatus.AUTO_CONFIRMED, 0),
+        "needs_confirmation_rows": status_counts.get(PreviewStatus.NEEDS_CONFIRMATION, 0),
+        "conflict_rows": status_counts.get(PreviewStatus.CONFLICT, 0),
     }
     db.commit()
 
     return ConversionRunResponse(
         id=run.id,
         status=run.status,
-        summary=ConversionRunSummary(total_rows=len(preview_rows)),
+        summary=ConversionRunSummary(
+            total_rows=len(preview_rows),
+            parse_failed_rows=parse_failed_count,
+            auto_confirmed_rows=status_counts.get(PreviewStatus.AUTO_CONFIRMED, 0),
+            needs_confirmation_rows=status_counts.get(PreviewStatus.NEEDS_CONFIRMATION, 0),
+            conflict_rows=status_counts.get(PreviewStatus.CONFLICT, 0),
+        ),
         preview_rows=preview_rows,
         company_id=run.company_id,
         bank_account_id=run.bank_account_id,
@@ -535,10 +546,14 @@ def dry_run_conversion(
             preview_rows.append(preview)
             row_index += 1
 
+    dry_status_counts: Counter[str] = Counter(p.status for p in preview_rows)
     return DryRunResponse(
         summary=ConversionRunSummary(
             total_rows=len(preview_rows),
             parse_failed_rows=parse_failed_count,
+            auto_confirmed_rows=dry_status_counts.get(PreviewStatus.AUTO_CONFIRMED, 0),
+            needs_confirmation_rows=dry_status_counts.get(PreviewStatus.NEEDS_CONFIRMATION, 0),
+            conflict_rows=dry_status_counts.get(PreviewStatus.CONFLICT, 0),
         ),
         preview_rows=preview_rows,
     )
@@ -749,9 +764,13 @@ def _build_bank_transaction(
 
 
 def _summary_from_json(raw: dict[str, object] | None) -> ConversionRunSummary:
+    d = raw or {}
     return ConversionRunSummary(
-        total_rows=int(raw.get("total_rows", 0)) if raw else 0,
-        parse_failed_rows=int(raw.get("parse_failed_rows", 0)) if raw else 0,
+        total_rows=int(d.get("total_rows", 0)),
+        parse_failed_rows=int(d.get("parse_failed_rows", 0)),
+        auto_confirmed_rows=int(d.get("auto_confirmed_rows", 0)),
+        needs_confirmation_rows=int(d.get("needs_confirmation_rows", 0)),
+        conflict_rows=int(d.get("conflict_rows", 0)),
     )
 
 
