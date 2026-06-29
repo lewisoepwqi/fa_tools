@@ -39,3 +39,25 @@ def test_missing_field_returns_none():
     ctx = EvaluationContext.from_transaction(_txn())
     assert ctx.get("nonexistent") is None
     assert ctx.has("nonexistent") is False
+
+
+def test_custom_field_collision_overwrites_standard():
+    ctx = EvaluationContext.from_transaction(_txn(extra_fields={"net_amount": "bad"}))
+    assert ctx.get("net_amount") == "bad"  # 文档化:自定义覆盖标准
+
+
+def test_none_extra_fields_does_not_raise():
+    # 模型不接受 None,但 default_factory 提供空字典,测试此分支
+    base = dict(
+        transaction_date="2026-01-01",
+        bank_account_id="acc-1",
+        direction=TransactionDirection.CREDIT,
+        net_amount=Decimal("100"),
+        source_file_id="f-1",
+        source_sheet_name="Sheet1",
+        source_row_index=2,
+        raw_row={},
+    )
+    txn = StandardBankTransaction(**base)
+    ctx = EvaluationContext.from_transaction(txn)
+    assert ctx.has("net_amount") is True

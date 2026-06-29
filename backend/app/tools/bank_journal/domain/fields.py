@@ -42,6 +42,11 @@ class EvaluationContext:
 
     @classmethod
     def from_transaction(cls, txn: StandardBankTransaction) -> EvaluationContext:
+        """从交易对象创建上下文。
+
+        若自定义字段 key 与标准字段同名,自定义值覆盖标准值
+        (此冲突已由 custom_field_service 在创建期拦截)。
+        """
         data = txn.model_dump()
         extra = data.pop("extra_fields", None) or {}
         data.update(extra)  # 关键:扩展字段提到顶层,与标准字段同权
