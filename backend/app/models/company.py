@@ -1,6 +1,7 @@
 from sqlalchemy import ForeignKey, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.crypto import EncryptedString
 from app.db.base import Base
 from app.models.common import IdMixin, TimestampMixin
 
@@ -24,7 +25,7 @@ class BankAccount(Base, IdMixin, TimestampMixin):
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
     bank_name: Mapped[str] = mapped_column(String(255), nullable=False)
     account_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    account_no_encrypted: Mapped[str] = mapped_column(String(512), nullable=False)
+    account_no_encrypted: Mapped[str] = mapped_column(EncryptedString(512), nullable=False)
     currency: Mapped[str] = mapped_column(
         String(16),
         nullable=False,
