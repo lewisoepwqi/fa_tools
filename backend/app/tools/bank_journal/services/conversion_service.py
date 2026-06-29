@@ -206,7 +206,6 @@ def run_conversion(
                 bank_tx = _build_bank_transaction(
                     run.id, transaction, _slot_map_for(custom_defs)
                 )
-                db.add(bank_tx)
                 preview = build_preview_row(
                     transaction,
                     payload.mappings,
@@ -214,6 +213,7 @@ def run_conversion(
                     payload.required_columns,
                     row_index,
                 )
+                db.add(bank_tx)  # stage only after both succeed → no orphan if preview throws
                 for code in parsed.warnings:
                     if code not in preview.exception_codes:
                         preview.exception_codes.append(code)

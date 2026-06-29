@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.core.config import get_settings
+from app.tools.bank_journal.models.conversion import BankTransaction
 
 
 @pytest.fixture()
@@ -453,3 +454,82 @@ def test_bad_mapping_isolated_per_row(client, upload_dir) -> None:
     rows = response.json()["preview_rows"]
     assert len(rows) > 0
     assert all(r["status"] == "parse_failed" for r in rows)  # 逐行降级而非整批崩
+
+
+def test_no_orphan_bank_transaction_when_all_rows_fail_preview(client_with_db, tmp_path) -> None:
+    """回归测试：build_preview_row 失败时不应留下孤儿 BankTransaction。
+
+    Bad mapping (source field does not exist) causes build_preview_row to throw
+    for every row, so every row lands in the except branch.  After the fix,
+    db.add(bank_tx) is only called AFTER build_preview_row succeeds, so no
+    BankTransaction rows should be persisted for the run.
+    """
+    import os
+
+    from app.core.config import get_settings
+
+    client, db = client_with_db
+
+    # Override UPLOAD_DIR so the file upload succeeds.
+    uploads = tmp_path / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    get_settings.cache_clear()
+    os.environ["UPLOAD_DIR"] = str(uploads)
+    get_settings.cache_clear()
+
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    response = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "入账日期": "posting_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "对方户名": "counterparty_name",
+                    "对方账号": "counterparty_account_no",
+                    "摘要": "summary",
+                    "用途": "purpose",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [
+                {"target": "科目", "type": "field", "source": "不存在字段"},
+            ],
+            "rules": [],
+            "required_columns": ["科目"],
+        },
+    )
+
+    assert response.status_code == 200
+    run_id = response.json()["id"]
+    rows = response.json()["preview_rows"]
+    assert len(rows) > 0
+    assert all(r["status"] == "parse_failed" for r in rows)
+
+    # Key regression assertion: no orphan BankTransaction rows for this run.
+    count = db.query(BankTransaction).filter(BankTransaction.conversion_run_id == run_id).count()
+    assert count == 0, (
+        f"Expected 0 BankTransaction rows for run {run_id}, got {count}. "
+        "Orphan bank_tx rows indicate db.add(bank_tx) was called before build_preview_row."
+    )
+
+    get_settings.cache_clear()
