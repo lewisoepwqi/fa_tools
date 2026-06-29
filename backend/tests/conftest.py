@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +7,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import get_settings
+from app.core.security import create_access_token, hash_password
 from app.db import session as db_session
 from app.db.base import Base
 from app.main import app
@@ -15,7 +18,7 @@ from app.main import app
 from app.models import associations, audit, company, file, user  # noqa: F401
 from app.models.company import BankAccount, Company
 from app.models.file import SourceFile
-from app.models.user import User
+from app.models.user import Role, User
 from app.tools.bank_journal import models  # noqa: F401  bank_journal 工具模型
 from app.tools.bank_journal.models.mapping import MappingProfile, MappingProfileVersion
 from app.tools.bank_journal.models.rule import Rule, RuleVersion
@@ -224,3 +227,56 @@ def client_with_db() -> Generator[tuple[TestClient, Session], None, None]:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+@pytest.fixture
+def make_user():
+    """工厂夹具：创建用户（含角色 + 公司授权）。
+
+    用法：user = make_user(db, roles=["admin"], company_ids=["c1"], email="x@y.com")
+    """
+    def _make(db, *, roles, company_ids=(), email=None, password="pw"):
+        usr = User(
+            id=str(uuid4()),
+            email=email or f"u{uuid4().hex[:8]}@x.com",
+            password_hash=hash_password(password),
+            status="active",
+        )
+        for code in roles:
+            role = db.query(Role).filter(Role.code == code).first()
+            if role is None:
+                role = Role(id=str(uuid4()), code=code, name=code)
+                db.add(role)
+            usr.roles.append(role)
+        for cid in company_ids:
+            comp = db.get(Company, cid)
+            if comp is None:
+                comp = Company(id=cid, name=cid)
+                db.add(comp)
+            usr.companies.append(comp)
+        db.add(usr)
+        db.commit()
+        db.refresh(usr)
+        return usr
+
+    return _make
+
+
+@pytest.fixture
+def auth_headers():
+    """工厂夹具：生成鉴权头（Bearer token）。
+
+    用法：headers = auth_headers(usr); headers["Authorization"]
+    """
+    settings = get_settings()
+
+    def _headers(usr):
+        token = create_access_token(
+            user_id=usr.id,
+            roles=[r.code for r in usr.roles],
+            ttl_minutes=settings.access_token_ttl_minutes,
+            secret=settings.secret_key,
+        )
+        return {"Authorization": f"Bearer {token}"}
+
+    return _headers
