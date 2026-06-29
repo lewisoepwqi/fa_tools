@@ -593,12 +593,15 @@ def _build_bank_transaction(
         receipt_no=txn.receipt_no,
         raw_row_json=txn.raw_row,
     )
-    # 把 extra_fields 按 field_key → slot_key 反查，写入对应预分配列。
+    # 把 extra_fields 按 field_key → slot_key 反查,按类型转换后写入对应预分配列。
     if slot_map and txn.extra_fields:
         for field_key, value in txn.extra_fields.items():
             cf = slot_map.get(field_key)
-            if cf is not None and value is not None:
-                kwargs[cf.slot_key] = value
+            if cf is None or value is None:
+                continue
+            if cf.data_type == "date" and isinstance(value, str):
+                value = date.fromisoformat(value)
+            kwargs[cf.slot_key] = value
     return BankTransaction(**kwargs)
 
 
