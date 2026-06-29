@@ -1,8 +1,9 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Input, Modal, Popconfirm, Select, Space, Switch, Table, Typography } from 'antd';
+import { Button, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
 import {
   createJournalTemplate,
@@ -20,9 +21,9 @@ import { VersionBadge } from '../components/VersionBadge';
 import { FILE_TYPE_OPTIONS } from '../constants';
 import type { JournalTemplate } from '../types/templates';
 
-const ACTOR = 'user-1';
-
 export function JournalTemplatePage() {
+  const { currentCompanyId, hasPermission } = useAuth();
+  const canManage = hasPermission('template_manage');
   const [rows, setRows] = useState<JournalTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -75,18 +76,21 @@ export function JournalTemplatePage() {
       message.error('请输入模板名称');
       return;
     }
+    if (!currentCompanyId) {
+      message.error('请先在右上角选择公司');
+      return;
+    }
     setCreating(true);
     try {
       const { columns_json, required_columns_json } = columnsToBackend(columns);
       await createJournalTemplate({
-        company_id: 'company-1',
+        company_id: currentCompanyId,
         name,
         version: {
           file_type: fileType,
           sheet_name: sheetName,
           columns_json,
-          required_columns_json,
-          created_by: ACTOR
+          required_columns_json
         }
       });
       message.success('模板已创建');
@@ -189,9 +193,21 @@ export function JournalTemplatePage() {
       <div className="toolbar" style={{ marginBottom: 16 }}>
         <h2 className="section-title">日记账模板</h2>
         <div className="toolbar-spacer" />
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建
-        </Button>
+        {!currentCompanyId && (
+          <Typography.Text type="secondary" style={{ marginRight: 8, fontSize: 12 }}>
+            请先在右上角选择公司
+          </Typography.Text>
+        )}
+        <Tooltip title={!canManage ? '权限不足' : undefined}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={!canManage || !currentCompanyId}
+            onClick={openCreate}
+          >
+            新建
+          </Button>
+        </Tooltip>
       </div>
       <Table<JournalTemplate>
         rowKey="id"

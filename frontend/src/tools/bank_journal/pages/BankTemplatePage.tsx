@@ -1,8 +1,9 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Modal, Popconfirm, Space, Switch, Table } from 'antd';
+import { Button, Modal, Popconfirm, Space, Switch, Table, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
 import {
   createBankTemplate,
@@ -15,9 +16,9 @@ import type { BankTemplateWizardValues } from '../components/BankTemplateWizard'
 import { VersionBadge } from '../components/VersionBadge';
 import type { BankTemplate } from '../types/templates';
 
-const ACTOR = 'user-1';
-
 export function BankTemplatePage() {
+  const { currentCompanyId, hasPermission } = useAuth();
+  const canManage = hasPermission('template_manage');
   const [rows, setRows] = useState<BankTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -54,7 +55,7 @@ export function BankTemplatePage() {
     setCreating(true);
     try {
       await createBankTemplate({
-        company_id: 'company-1',
+        company_id: currentCompanyId,
         name: values.name,
         bank_name: values.bank_name ?? null,
         version: {
@@ -66,8 +67,7 @@ export function BankTemplatePage() {
           amount_mode: values.detect.amount_mode,
           amount_config_json: values.detect.amount_config,
           date_formats_json: values.detect.date_formats,
-          sample_file_id: values.sample_file_id ?? null,
-          created_by: ACTOR
+          sample_file_id: values.sample_file_id ?? null
         }
       });
       message.success('模板已创建');
@@ -174,9 +174,21 @@ export function BankTemplatePage() {
       <div className="toolbar" style={{ marginBottom: 16 }}>
         <h2 className="section-title">银行流水模板</h2>
         <div className="toolbar-spacer" />
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setWizardOpen(true)}>
-          新建
-        </Button>
+        {!currentCompanyId && (
+          <Typography.Text type="secondary" style={{ marginRight: 8, fontSize: 12 }}>
+            请先在右上角选择公司
+          </Typography.Text>
+        )}
+        <Tooltip title={!canManage ? '权限不足' : undefined}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={!canManage || !currentCompanyId}
+            onClick={() => setWizardOpen(true)}
+          >
+            新建
+          </Button>
+        </Tooltip>
       </div>
       <Table<BankTemplate>
         rowKey="id"

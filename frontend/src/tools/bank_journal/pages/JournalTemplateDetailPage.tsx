@@ -11,11 +11,13 @@ import {
   Spin,
   Table,
   Tag,
+  Tooltip,
   Typography
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
 import {
   createJournalTemplateVersion,
@@ -36,9 +38,9 @@ import { VersionBadge } from '../components/VersionBadge';
 import type { JournalTemplate, JournalTemplateVersion } from '../types/templates';
 import type { MappingProfile } from '../types/mapping';
 
-const ACTOR = 'user-1';
-
 export function JournalTemplateDetailPage() {
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission('template_manage');
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [data, setData] = useState<JournalTemplate | null>(null);
@@ -98,8 +100,7 @@ export function JournalTemplateDetailPage() {
         file_type: editFileType,
         sheet_name: editSheetName,
         columns_json,
-        required_columns_json,
-        created_by: ACTOR
+        required_columns_json
       });
       message.success('已创建新版本');
       setEditOpen(false);
@@ -177,9 +178,11 @@ export function JournalTemplateDetailPage() {
           </Button>
           <h2 className="section-title">{data.name}</h2>
           <div className="toolbar-spacer" />
-          <Button icon={<EditOutlined />} onClick={openEdit}>
-            编辑（新版本）
-          </Button>
+          <Tooltip title={!canManage ? '权限不足' : undefined}>
+            <Button icon={<EditOutlined />} onClick={openEdit} disabled={!canManage}>
+              编辑（新版本）
+            </Button>
+          </Tooltip>
           <Button onClick={() => setHistoryOpen(true)}>版本历史</Button>
           <Button onClick={handleToggleStatus}>
             {data.status === 'active' ? '停用' : '启用'}

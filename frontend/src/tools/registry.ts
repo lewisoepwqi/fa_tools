@@ -12,6 +12,8 @@ export interface ToolMenuItem {
   label: string;
   /** 点击后跳转的路径。 */
   target: string;
+  /** 可选权限门控：缺少该权限时菜单项隐藏。 */
+  requiredPermission?: string;
 }
 
 /**
@@ -38,6 +40,8 @@ export interface Tool {
    * 不提供则渲染为单层叶子菜单项。
    */
   children?: ToolMenuItem[];
+  /** 可选权限门控：缺少该权限时整个工具菜单项隐藏。 */
+  requiredPermission?: string;
 }
 
 /**

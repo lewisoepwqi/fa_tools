@@ -9,11 +9,13 @@ import {
   Space,
   Switch,
   Table,
+  Tooltip,
   Typography
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
 import { listBankTemplates } from '../api/bankTemplates';
 import { createJournalTemplate, listJournalTemplates } from '../api/journalTemplates';
@@ -40,9 +42,9 @@ import { useStandardFields } from '../components/useStandardFields';
 import type { BankTemplate, JournalTemplate } from '../types/templates';
 import type { MappingProfile } from '../types/mapping';
 
-const ACTOR = 'user-1';
-
 export function MappingProfilePage() {
+  const { currentCompanyId, hasPermission } = useAuth();
+  const canManage = hasPermission('template_manage');
   const [rows, setRows] = useState<MappingProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -136,17 +138,20 @@ export function MappingProfilePage() {
       message.error('请输入日记账模板名称');
       return;
     }
+    if (!currentCompanyId) {
+      message.error('请先在右上角选择公司');
+      return;
+    }
     setJournalCreating(true);
     try {
       const { columns_json, required_columns_json } = columnsToBackend(journalFormColumns);
       const created = await createJournalTemplate({
-        company_id: 'company-1',
+        company_id: currentCompanyId,
         name: journalFormName.trim(),
         version: {
           file_type: 'xlsx',
           columns_json,
-          required_columns_json,
-          created_by: ACTOR
+          required_columns_json
         }
       });
       setJournalTemplates((prev) => [...prev, created]);
@@ -166,16 +171,19 @@ export function MappingProfilePage() {
       message.error('请输入方案名称');
       return;
     }
+    if (!currentCompanyId) {
+      message.error('请先在右上角选择公司');
+      return;
+    }
     setCreating(true);
     try {
       await createMappingProfile({
-        company_id: 'company-1',
+        company_id: currentCompanyId,
         name,
         bank_template_id: bankTemplateId ?? null,
         company_journal_template_id: journalTemplateId ?? null,
         version: {
-          mappings_json: mappingToBackend(mappings),
-          created_by: ACTOR
+          mappings_json: mappingToBackend(mappings)
         }
       });
       message.success('映射方案已创建');
@@ -280,9 +288,21 @@ export function MappingProfilePage() {
       <div className="toolbar" style={{ marginBottom: 16 }}>
         <h2 className="section-title">映射方案</h2>
         <div className="toolbar-spacer" />
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建
-        </Button>
+        {!currentCompanyId && (
+          <Typography.Text type="secondary" style={{ marginRight: 8, fontSize: 12 }}>
+            请先在右上角选择公司
+          </Typography.Text>
+        )}
+        <Tooltip title={!canManage ? '权限不足' : undefined}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={!canManage || !currentCompanyId}
+            onClick={openCreate}
+          >
+            新建
+          </Button>
+        </Tooltip>
       </div>
       <Table<MappingProfile>
         rowKey="id"

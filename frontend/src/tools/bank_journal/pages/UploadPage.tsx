@@ -1,9 +1,10 @@
 import { InboxOutlined, PlayCircleOutlined } from '@ant-design/icons';
-import { Alert, Button, Card, Select, Space, Table, Tag, Typography, Upload } from 'antd';
+import { Alert, Button, Card, Select, Space, Table, Tag, Tooltip, Typography, Upload } from 'antd';
 import type { UploadFile } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../../auth/useAuth';
 import { uploadBankStatement } from '../../../api/files';
 import { message } from '../../../components/antdApp';
 import { listBankTemplates } from '../api/bankTemplates';
@@ -27,6 +28,8 @@ import type { ConversionRunResponse } from '../types/conversion';
  */
 export function UploadPage() {
   const navigate = useNavigate();
+  const { hasPermission, currentCompanyId } = useAuth();
+  const canProcess = hasPermission('conversion_process');
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -75,8 +78,12 @@ export function UploadPage() {
   );
 
   const handleBeforeUpload = async (file: File) => {
+    if (!currentCompanyId) {
+      message.error('请先在右上角选择公司');
+      return false;
+    }
     try {
-      const uploaded = await uploadBankStatement(file);
+      const uploaded = await uploadBankStatement(file, currentCompanyId);
       setSourceFileIds((prev) => [...prev, uploaded.id]);
     } catch (err) {
       message.error(err instanceof Error ? err.message : '上传失败');
@@ -93,9 +100,14 @@ export function UploadPage() {
       message.error('请选择银行流水模板和日记账模板');
       return;
     }
+    if (!currentCompanyId) {
+      message.error('请先在右上角选择公司');
+      return;
+    }
     setLoading(true);
     try {
       const result = await createConversionRunFromConfig({
+        company_id: currentCompanyId,
         source_file_ids: sourceFileIds,
         bank_template_id: bankTemplateId,
         company_journal_template_id: journalTemplateId,
@@ -117,9 +129,14 @@ export function UploadPage() {
       message.error('请先上传文件并选择银行流水模板');
       return;
     }
+    if (!currentCompanyId) {
+      message.error('请先在右上角选择公司');
+      return;
+    }
     setDryRunning(true);
     try {
       const result = await dryRunConversion({
+        company_id: currentCompanyId,
         source_file_ids: sourceFileIds,
         bank_template_id: bankTemplateId,
         company_journal_template_id: journalTemplateId,
@@ -269,18 +286,22 @@ export function UploadPage() {
 
         <div className="toolbar" style={{ marginTop: 20 }}>
           <div className="toolbar-spacer" />
-          <Button
-            icon={<PlayCircleOutlined />}
-            loading={dryRunning}
-            disabled={!canStart}
-            onClick={handleDryRun}
-            style={{ marginRight: 8 }}
-          >
-            试跑预览（不保存）
-          </Button>
-          <Button type="primary" loading={loading} disabled={!canStart} onClick={handleStart}>
-            开始转换
-          </Button>
+          <Tooltip title={!canProcess ? '权限不足' : undefined}>
+            <Button
+              icon={<PlayCircleOutlined />}
+              loading={dryRunning}
+              disabled={!canProcess || !canStart}
+              onClick={handleDryRun}
+              style={{ marginRight: 8 }}
+            >
+              试跑预览（不保存）
+            </Button>
+          </Tooltip>
+          <Tooltip title={!canProcess ? '权限不足' : undefined}>
+            <Button type="primary" loading={loading} disabled={!canProcess || !canStart} onClick={handleStart}>
+              开始转换
+            </Button>
+          </Tooltip>
         </div>
       </Card>
       {dryRunResult && (

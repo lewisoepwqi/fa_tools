@@ -1,8 +1,9 @@
-import { AuditOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
-import { Button, Layout, Menu } from 'antd';
+import { AuditOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, UserOutlined } from '@ant-design/icons';
+import { Button, Layout, Menu, Select, Space, Typography } from 'antd';
 import type { MenuProps } from 'antd';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/useAuth';
 import { registry, type ToolMenuItem } from '../tools/registry';
 
 const { Header, Sider, Content } = Layout;
@@ -14,6 +15,7 @@ interface AppShellProps {
 type MenuItem = Required<MenuProps>['items'][number];
 
 const AUDIT_KEY = 'audit';
+const AUDIT_PERMISSION = 'audit_view';
 
 /** 展平工具 children 为 key→target 查找表。 */
 function buildChildTargetMap(): Record<string, string> {
@@ -61,18 +63,44 @@ export function AppShell({ children }: AppShellProps) {
   const activeKey = activeKeyFromPathname(location.pathname);
   const { tool, crumb } = breadcrumbs(location.pathname);
 
+  const { me, logout, hasPermission, currentCompanyId, setCurrentCompanyId } = useAuth();
+
+  // 公司列表：accessible_companies 为数组时直接用，为 "all" 时占位
+  const companiesArray = Array.isArray(me?.accessible_companies) ? me.accessible_companies : null;
+
+  // 初次加载：若 currentCompanyId 为 null 且有公司列表，自动选第一个
+  useEffect(() => {
+    if (currentCompanyId === null && companiesArray && companiesArray.length > 0) {
+      setCurrentCompanyId(companiesArray[0].id);
+    }
+  }, [companiesArray, currentCompanyId, setCurrentCompanyId]);
+
+  // 构建公司切换器选项
+  const companyOptions =
+    me?.accessible_companies === 'all'
+      ? [{ value: '', label: '全部公司' }]
+      : (companiesArray ?? []).map((c) => ({ value: c.id, label: c.name }));
+
+  // 权限过滤后的菜单
+  const visibleTools = registry.filter(
+    (t) => !t.requiredPermission || hasPermission(t.requiredPermission)
+  );
+  const showAudit = hasPermission(AUDIT_PERMISSION);
+
   const items: MenuItem[] = [
-    ...registry.map<MenuItem>((t) =>
+    ...visibleTools.map<MenuItem>((t) =>
       t.children && t.children.length > 0
         ? {
             key: t.id,
             icon: <t.icon />,
             label: t.label,
-            children: t.children.map((c) => ({ key: c.key, label: c.label }))
+            children: t.children
+              .filter((c) => !c.requiredPermission || hasPermission(c.requiredPermission))
+              .map((c) => ({ key: c.key, label: c.label }))
           }
         : { key: t.id, icon: <t.icon />, label: t.label }
     ),
-    { key: AUDIT_KEY, icon: <AuditOutlined />, label: '审计日志' }
+    ...(showAudit ? [{ key: AUDIT_KEY, icon: <AuditOutlined />, label: '审计日志' } as MenuItem] : [])
   ];
 
   const handleClick: MenuProps['onClick'] = ({ key }) => {
@@ -123,6 +151,32 @@ export function AppShell({ children }: AppShellProps) {
             )}
             {crumb && <span>{crumb}</span>}
           </span>
+          <div className="toolbar-spacer" />
+          {/* 公司切换器 */}
+          {me && companyOptions.length > 0 && (
+            <Select
+              value={me.accessible_companies === 'all' ? '' : (currentCompanyId ?? undefined)}
+              onChange={(v: string) => setCurrentCompanyId(v || null)}
+              options={companyOptions}
+              style={{ width: 160, marginRight: 12 }}
+              placeholder="选择公司"
+              size="small"
+            />
+          )}
+          {/* 用户信息 + 退出 */}
+          <Space size={8}>
+            <UserOutlined style={{ color: '#888' }} />
+            <Typography.Text style={{ fontSize: 13, color: '#888' }}>
+              {me?.email ?? ''}
+            </Typography.Text>
+            <Button
+              type="text"
+              size="small"
+              icon={<LogoutOutlined />}
+              onClick={logout}
+              title="退出登录"
+            />
+          </Space>
         </Header>
         <Content className="app-content">{children}</Content>
       </Layout>

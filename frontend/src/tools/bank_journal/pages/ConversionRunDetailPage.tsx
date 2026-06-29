@@ -13,11 +13,13 @@ import {
   Spin,
   Table,
   Tag,
+  Tooltip,
   Typography
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
 import { getConversionRun } from '../api/conversionRuns';
 import { createExport, downloadExport } from '../api/exports';
@@ -27,7 +29,6 @@ import { StatusTag } from '../components/StatusTag';
 import type { ConversionRunResponse, PreviewRow } from '../types/conversion';
 
 const JOURNAL_COLUMNS = ['日期', '摘要', '科目', '金额'];
-const ACTOR = 'user-1';
 
 function renderValue(value: unknown): string {
   if (value === null || value === undefined) {
@@ -45,6 +46,10 @@ function renderValue(value: unknown): string {
 export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunResponse }) {
   const { runId } = useParams<{ runId: string }>();
   const navigate = useNavigate();
+  const { hasPermission } = useAuth();
+  const canProcess = hasPermission('conversion_process');
+  const canConfirm = hasPermission('conversion_confirm');
+  const canExport = hasPermission('export_run');
   const [run, setRun] = useState<ConversionRunResponse | null>(runProp ?? null);
   const [loading, setLoading] = useState(!runProp && !!runId);
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
@@ -117,7 +122,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
     if (!row.id) return;
     setActing(true);
     try {
-      const result = await confirmPreviewRow(row.id, ACTOR);
+      const result = await confirmPreviewRow(row.id);
       patchRowLocally(row.id, { status: result.status });
       message.success('已确认');
     } catch (err) {
@@ -140,7 +145,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
     for (const row of targets) {
       if (!row.id) continue;
       try {
-        const result = await confirmPreviewRow(row.id, ACTOR);
+        const result = await confirmPreviewRow(row.id);
         patchRowLocally(row.id, { status: result.status });
         ok += 1;
       } catch {
@@ -170,8 +175,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
         editingRow.id,
         values.field_name,
         values.new_value,
-        values.reason || null,
-        ACTOR
+        values.reason || null
       );
       patchRowLocally(editingRow.id, {
         output_values: { ...editingRow.output_values, [values.field_name]: values.new_value }
@@ -192,7 +196,6 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
       const result = await createExport(run.id, {
         file_type: 'xlsx',
         columns: JOURNAL_COLUMNS,
-        exported_by: ACTOR,
         only_confirmed: onlyConfirmed
       });
       message.success(`已生成导出（${result.row_count} 行）`);
@@ -262,21 +265,25 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
       width: 160,
       render: (_, record) => (
         <Space size={4}>
-          <Button
-            size="small"
-            icon={<EditOutlined />}
-            disabled={!record.id || record.status === 'parse_failed'}
-            onClick={() => openEdit(record)}
-          />
-          <Button
-            size="small"
-            type="link"
-            disabled={!record.id || record.status === 'manually_confirmed'}
-            loading={acting}
-            onClick={() => handleConfirmOne(record)}
-          >
-            确认
-          </Button>
+          <Tooltip title={!canProcess ? '权限不足' : undefined}>
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              disabled={!canProcess || !record.id || record.status === 'parse_failed'}
+              onClick={() => openEdit(record)}
+            />
+          </Tooltip>
+          <Tooltip title={!canConfirm ? '权限不足' : undefined}>
+            <Button
+              size="small"
+              type="link"
+              disabled={!canConfirm || !record.id || record.status === 'manually_confirmed'}
+              loading={acting}
+              onClick={() => handleConfirmOne(record)}
+            >
+              确认
+            </Button>
+          </Tooltip>
         </Space>
       )
     }
@@ -393,13 +400,15 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
               options={exceptionOptions.map((c) => ({ value: c, label: c }))}
             />
           )}
-          <Button
-            disabled={selectedRowKeys.length === 0}
-            loading={acting}
-            onClick={handleBatchConfirm}
-          >
-            批量确认（{selectedRowKeys.length}）
-          </Button>
+          <Tooltip title={!canConfirm ? '权限不足' : undefined}>
+            <Button
+              disabled={!canConfirm || selectedRowKeys.length === 0}
+              loading={acting}
+              onClick={handleBatchConfirm}
+            >
+              批量确认（{selectedRowKeys.length}）
+            </Button>
+          </Tooltip>
         </div>
         <Table<PreviewRow>
           rowKey="row_index"
@@ -415,12 +424,16 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
         />
         <div className="toolbar" style={{ marginTop: 16 }}>
           <div className="toolbar-spacer" />
-          <Button loading={acting} onClick={() => handleExport(true)}>
-            仅导出已确认
-          </Button>
-          <Button type="primary" loading={acting} onClick={() => handleExport(false)}>
-            导出全部
-          </Button>
+          <Tooltip title={!canExport ? '权限不足' : undefined}>
+            <Button disabled={!canExport} loading={acting} onClick={() => handleExport(true)}>
+              仅导出已确认
+            </Button>
+          </Tooltip>
+          <Tooltip title={!canExport ? '权限不足' : undefined}>
+            <Button type="primary" disabled={!canExport} loading={acting} onClick={() => handleExport(false)}>
+              导出全部
+            </Button>
+          </Tooltip>
         </div>
         {filteredRows.length === 0 && (
           <div className="empty-teach" style={{ marginTop: 12 }}>

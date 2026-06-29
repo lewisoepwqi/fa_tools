@@ -8,11 +8,13 @@ import {
   Space,
   Spin,
   Table,
+  Tooltip,
   Typography
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
 import { listBankTemplates } from '../api/bankTemplates';
 import { listJournalTemplates } from '../api/journalTemplates';
@@ -34,9 +36,9 @@ import { VersionBadge } from '../components/VersionBadge';
 import type { BankTemplate, JournalTemplate } from '../types/templates';
 import type { MappingProfile, MappingProfileVersion } from '../types/mapping';
 
-const ACTOR = 'user-1';
-
 export function MappingProfileDetailPage() {
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission('template_manage');
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [data, setData] = useState<MappingProfile | null>(null);
@@ -88,8 +90,7 @@ export function MappingProfileDetailPage() {
     setEditing(true);
     try {
       await createMappingProfileVersion(id, {
-        mappings_json: mappingToBackend(editMappings),
-        created_by: ACTOR
+        mappings_json: mappingToBackend(editMappings)
       });
       message.success('已创建新版本');
       setEditOpen(false);
@@ -162,9 +163,11 @@ export function MappingProfileDetailPage() {
           </Button>
           <h2 className="section-title">{data.name}</h2>
           <div className="toolbar-spacer" />
-          <Button icon={<EditOutlined />} onClick={openEdit}>
-            编辑（新版本）
-          </Button>
+          <Tooltip title={!canManage ? '权限不足' : undefined}>
+            <Button icon={<EditOutlined />} onClick={openEdit} disabled={!canManage}>
+              编辑（新版本）
+            </Button>
+          </Tooltip>
           <Button onClick={() => setHistoryOpen(true)}>版本历史</Button>
           <Button onClick={handleToggleStatus}>
             {data.status === 'active' ? '停用' : '启用'}

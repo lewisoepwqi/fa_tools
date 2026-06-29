@@ -11,11 +11,13 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
 import {
   createRuleVersion,
@@ -35,9 +37,9 @@ import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { Rule, RuleVersion } from '../types/rules';
 
-const ACTOR = 'user-1';
-
 export function RuleDetailPage() {
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission('template_manage');
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const standardFields = useStandardFields();
@@ -90,8 +92,7 @@ export function RuleDetailPage() {
         priority: editPriority,
         conditions_json,
         actions_json,
-        allow_auto_confirm: editAuto,
-        created_by: ACTOR
+        allow_auto_confirm: editAuto
       });
       message.success('已创建新版本');
       setEditOpen(false);
@@ -165,9 +166,11 @@ export function RuleDetailPage() {
           </Button>
           <h2 className="section-title">{data.name}</h2>
           <div className="toolbar-spacer" />
-          <Button icon={<EditOutlined />} onClick={openEdit}>
-            编辑（新版本）
-          </Button>
+          <Tooltip title={!canManage ? '权限不足' : undefined}>
+            <Button icon={<EditOutlined />} onClick={openEdit} disabled={!canManage}>
+              编辑（新版本）
+            </Button>
+          </Tooltip>
           <Button onClick={() => setHistoryOpen(true)}>版本历史</Button>
           <Button onClick={handleToggleStatus}>
             {data.status === 'active' ? '停用' : '启用'}

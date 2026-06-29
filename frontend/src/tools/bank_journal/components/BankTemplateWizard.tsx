@@ -12,13 +12,12 @@ import {
 import type { UploadProps } from 'antd';
 import type { RcFile } from 'antd/es/upload';
 import { useEffect, useState } from 'react';
+import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
 import { uploadBankStatement } from '../../../api/files';
 import { detectBankTemplate } from '../api/bankTemplates';
 import { DetectResultView } from './DetectResultView';
 import { useStandardFields } from './useStandardFields';
-
-const COMPANY_ID = 'company-1';
 
 const { Dragger } = Upload;
 
@@ -65,6 +64,7 @@ export function BankTemplateWizard({
   initialValues,
   skipUpload
 }: BankTemplateWizardProps) {
+  const { currentCompanyId } = useAuth();
   // 步骤：编辑场景跳过上传（步骤 1）
   const firstStep = skipUpload ? 1 : 0;
   const standardFields = useStandardFields();
@@ -118,10 +118,14 @@ export function BankTemplateWizard({
   };
 
   const handleUploadAndDetect = async (file: RcFile) => {
+    if (!currentCompanyId) {
+      message.error('请先在右上角选择公司');
+      return false;
+    }
     setUploading(true);
     try {
-      const uploaded = await uploadBankStatement(file);
-      const result = await detectBankTemplate(uploaded.id, COMPANY_ID);
+      const uploaded = await uploadBankStatement(file, currentCompanyId);
+      const result = await detectBankTemplate(uploaded.id, currentCompanyId);
       setDetect(result);
       setSampleFileId(uploaded.id);
       message.success('已自动识别流水格式，请核对');
