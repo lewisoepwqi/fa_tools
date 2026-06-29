@@ -1,19 +1,24 @@
 import { apiClient } from '../../../api/client';
 import type { Rule, RuleVersion } from '../types/rules';
+import type { Page } from '../types/pagination';
 
 /** 过滤参数：用于模板详情页展示"绑定了哪些规则"等反向关联查询。 */
 export interface RuleFilter {
   company_id?: string;
   scope_type?: string;
   scope_id?: string;
+  limit?: number;
+  offset?: number;
 }
 
-export async function listRules(filter: RuleFilter = {}): Promise<Rule[]> {
-  const params: Record<string, string> = {};
+export async function listRules(filter: RuleFilter = {}): Promise<Page<Rule>> {
+  const params: Record<string, string | number> = {};
   if (filter.company_id) params.company_id = filter.company_id;
   if (filter.scope_type) params.scope_type = filter.scope_type;
   if (filter.scope_id) params.scope_id = filter.scope_id;
-  const response = await apiClient.get<Rule[]>('/api/tools/bank-journal/rules', { params });
+  if (filter.limit !== undefined) params.limit = filter.limit;
+  if (filter.offset !== undefined) params.offset = filter.offset;
+  const response = await apiClient.get<Page<Rule>>('/api/tools/bank-journal/rules', { params });
   return response.data;
 }
 

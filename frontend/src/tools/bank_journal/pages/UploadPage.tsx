@@ -53,14 +53,19 @@ export function UploadPage() {
   // 加载所有 active 配置供下拉选择
   useEffect(() => {
     let active = true;
-    Promise.all([listBankTemplates(), listJournalTemplates(), listMappingProfiles(), listRules()])
+    Promise.all([
+      listBankTemplates({ limit: 500 }),
+      listJournalTemplates({ limit: 500 }),
+      listMappingProfiles({ limit: 500 }),
+      listRules({ limit: 500 })
+    ])
       .then(([b, j, m, r]) => {
         if (!active) return;
         // 仅展示启用中的配置（status === 'active'）
-        setBankTemplates(b.filter((t) => t.status === 'active'));
-        setJournalTemplates(j.filter((t) => t.status === 'active'));
-        setMappingProfiles(m.filter((t) => t.status === 'active'));
-        setRules(r.filter((t) => t.status === 'active'));
+        setBankTemplates(b.items.filter((t) => t.status === 'active'));
+        setJournalTemplates(j.items.filter((t) => t.status === 'active'));
+        setMappingProfiles(m.items.filter((t) => t.status === 'active'));
+        setRules(r.items.filter((t) => t.status === 'active'));
       })
       .catch(() => {
         /* 加载失败时不阻塞上传，下拉为空即可 */

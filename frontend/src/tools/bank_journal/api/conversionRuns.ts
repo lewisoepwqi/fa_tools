@@ -3,10 +3,15 @@ import type {
   ConversionRunListItem,
   ConversionRunResponse
 } from '../types/conversion';
+import type { Page } from '../types/pagination';
 
-export async function listConversionRuns(companyId?: string): Promise<ConversionRunListItem[]> {
-  const params = companyId ? { company_id: companyId } : undefined;
-  const response = await apiClient.get<ConversionRunListItem[]>('/api/tools/bank-journal/conversion-runs', { params });
+export async function listConversionRuns(
+  params?: { limit?: number; offset?: number; company_id?: string }
+): Promise<Page<ConversionRunListItem>> {
+  const response = await apiClient.get<Page<ConversionRunListItem>>(
+    '/api/tools/bank-journal/conversion-runs',
+    { params }
+  );
   return response.data;
 }
 

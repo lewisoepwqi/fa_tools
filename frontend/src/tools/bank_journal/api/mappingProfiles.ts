@@ -1,23 +1,28 @@
 import { apiClient } from '../../../api/client';
 import type { MappingProfile, MappingProfileVersion } from '../types/mapping';
+import type { Page } from '../types/pagination';
 
 /** 过滤参数：用于模板详情页展示"被哪些映射方案引用"等反向关联查询。 */
 export interface MappingProfileFilter {
   company_id?: string;
   bank_template_id?: string;
   company_journal_template_id?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export async function listMappingProfiles(
   filter: MappingProfileFilter = {}
-): Promise<MappingProfile[]> {
-  const params: Record<string, string> = {};
+): Promise<Page<MappingProfile>> {
+  const params: Record<string, string | number> = {};
   if (filter.company_id) params.company_id = filter.company_id;
   if (filter.bank_template_id) params.bank_template_id = filter.bank_template_id;
   if (filter.company_journal_template_id) {
     params.company_journal_template_id = filter.company_journal_template_id;
   }
-  const response = await apiClient.get<MappingProfile[]>(
+  if (filter.limit !== undefined) params.limit = filter.limit;
+  if (filter.offset !== undefined) params.offset = filter.offset;
+  const response = await apiClient.get<Page<MappingProfile>>(
     '/api/tools/bank-journal/mapping-profiles',
     { params }
   );

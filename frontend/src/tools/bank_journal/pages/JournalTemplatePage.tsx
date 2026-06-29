@@ -24,7 +24,10 @@ import type { JournalTemplate } from '../types/templates';
 export function JournalTemplatePage() {
   const { currentCompanyId, hasPermission } = useAuth();
   const canManage = hasPermission('template_manage');
-  const [rows, setRows] = useState<JournalTemplate[]>([]);
+  const [items, setItems] = useState<JournalTemplate[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -39,21 +42,29 @@ export function JournalTemplatePage() {
 
   const load = () => {
     setLoading(true);
-    listJournalTemplates()
-      .then(setRows)
-      .catch(() => setRows([]))
+    listJournalTemplates({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => { setItems(p.items); setTotal(p.total); })
+      .catch(() => setItems([]))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    listJournalTemplates()
-      .then((data) => {
-        if (active) setRows(data);
+    listJournalTemplates({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => {
+        if (active) { setItems(p.items); setTotal(p.total); }
       })
       .catch(() => {
-        if (active) setRows([]);
+        if (active) setItems([]);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -61,7 +72,7 @@ export function JournalTemplatePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [page, pageSize, currentCompanyId]);
 
   const openCreate = () => {
     setName('');
@@ -212,9 +223,16 @@ export function JournalTemplatePage() {
       <Table<JournalTemplate>
         rowKey="id"
         columns={columnsDef}
-        dataSource={rows}
+        dataSource={items}
         loading={loading}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 条`,
+          onChange: (p, ps) => { setPage(p); setPageSize(ps); }
+        }}
         onRow={(record) => ({
           onClick: () => navigate(`/bank-journal/templates/journal/${record.id}`),
           style: { cursor: 'pointer' }

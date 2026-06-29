@@ -1,9 +1,11 @@
 import { apiClient } from '../../../api/client';
 import type { JournalTemplate, JournalTemplateVersion } from '../types/templates';
+import type { Page } from '../types/pagination';
 
-export async function listJournalTemplates(companyId?: string): Promise<JournalTemplate[]> {
-  const params = companyId ? { company_id: companyId } : undefined;
-  const response = await apiClient.get<JournalTemplate[]>('/api/tools/bank-journal/journal-templates', { params });
+export async function listJournalTemplates(
+  params?: { limit?: number; offset?: number; company_id?: string }
+): Promise<Page<JournalTemplate>> {
+  const response = await apiClient.get<Page<JournalTemplate>>('/api/tools/bank-journal/journal-templates', { params });
   return response.data;
 }
 

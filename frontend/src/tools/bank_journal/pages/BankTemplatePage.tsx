@@ -19,7 +19,10 @@ import type { BankTemplate } from '../types/templates';
 export function BankTemplatePage() {
   const { currentCompanyId, hasPermission } = useAuth();
   const canManage = hasPermission('template_manage');
-  const [rows, setRows] = useState<BankTemplate[]>([]);
+  const [items, setItems] = useState<BankTemplate[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -27,21 +30,29 @@ export function BankTemplatePage() {
 
   const load = () => {
     setLoading(true);
-    listBankTemplates()
-      .then(setRows)
-      .catch(() => setRows([]))
+    listBankTemplates({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => { setItems(p.items); setTotal(p.total); })
+      .catch(() => setItems([]))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    listBankTemplates()
-      .then((data) => {
-        if (active) setRows(data);
+    listBankTemplates({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => {
+        if (active) { setItems(p.items); setTotal(p.total); }
       })
       .catch(() => {
-        if (active) setRows([]);
+        if (active) setItems([]);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -49,7 +60,7 @@ export function BankTemplatePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [page, pageSize, currentCompanyId]);
 
   const handleSubmit = async (values: BankTemplateWizardValues) => {
     // 防止模态框打开后公司切换为空时仍提交
@@ -198,9 +209,16 @@ export function BankTemplatePage() {
       <Table<BankTemplate>
         rowKey="id"
         columns={columns}
-        dataSource={rows}
+        dataSource={items}
         loading={loading}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 条`,
+          onChange: (p, ps) => { setPage(p); setPageSize(ps); }
+        }}
         onRow={(record) => ({
           onClick: () => navigate(`/bank-journal/templates/bank/${record.id}`),
           style: { cursor: 'pointer' }

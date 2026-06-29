@@ -70,10 +70,10 @@ export function MappingProfileDetailPage() {
     if (!id) return;
     load(id);
     // 顺带加载模板名（用于展示绑定关系）
-    Promise.all([listBankTemplates(), listJournalTemplates()])
+    Promise.all([listBankTemplates({ limit: 500 }), listJournalTemplates({ limit: 500 })])
       .then(([b, j]) => {
-        setBankTemplates(b);
-        setJournalTemplates(j);
+        setBankTemplates(b.items);
+        setJournalTemplates(j.items);
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -19,7 +19,10 @@ const EMPTY_RULE: RuleEditorData = { logic: 'all', conditions: [], actions: [] }
 export function RulePage() {
   const { currentCompanyId, hasPermission } = useAuth();
   const canManage = hasPermission('template_manage');
-  const [rows, setRows] = useState<Rule[]>([]);
+  const [items, setItems] = useState<Rule[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -31,21 +34,29 @@ export function RulePage() {
 
   const load = () => {
     setLoading(true);
-    listRules()
-      .then(setRows)
-      .catch(() => setRows([]))
+    listRules({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => { setItems(p.items); setTotal(p.total); })
+      .catch(() => setItems([]))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    listRules()
-      .then((data) => {
-        if (active) setRows(data);
+    listRules({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => {
+        if (active) { setItems(p.items); setTotal(p.total); }
       })
       .catch(() => {
-        if (active) setRows([]);
+        if (active) setItems([]);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -53,7 +64,7 @@ export function RulePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [page, pageSize, currentCompanyId]);
 
   const openCreate = () => {
     setName('');
@@ -221,9 +232,16 @@ export function RulePage() {
       <Table<Rule>
         rowKey="id"
         columns={columns}
-        dataSource={rows}
+        dataSource={items}
         loading={loading}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 条`,
+          onChange: (p, ps) => { setPage(p); setPageSize(ps); }
+        }}
         onRow={(record) => ({
           onClick: () => navigate(`/bank-journal/templates/rule/${record.id}`),
           style: { cursor: 'pointer' }

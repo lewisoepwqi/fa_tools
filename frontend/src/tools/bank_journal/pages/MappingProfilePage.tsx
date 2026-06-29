@@ -45,7 +45,10 @@ import type { MappingProfile } from '../types/mapping';
 export function MappingProfilePage() {
   const { currentCompanyId, hasPermission } = useAuth();
   const canManage = hasPermission('template_manage');
-  const [rows, setRows] = useState<MappingProfile[]>([]);
+  const [items, setItems] = useState<MappingProfile[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -72,9 +75,13 @@ export function MappingProfilePage() {
 
   const load = () => {
     setLoading(true);
-    listMappingProfiles()
-      .then(setRows)
-      .catch(() => setRows([]))
+    listMappingProfiles({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => { setItems(p.items); setTotal(p.total); })
+      .catch(() => setItems([]))
       .finally(() => setLoading(false));
   };
 
@@ -82,15 +89,24 @@ export function MappingProfilePage() {
     let active = true;
     setLoading(true);
     // 同时加载映射方案 + 银行/日记账模板，用于列表中解析模板名（修复首渲染显示 -）
-    Promise.all([listMappingProfiles(), listBankTemplates(), listJournalTemplates()])
+    Promise.all([
+      listMappingProfiles({
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+        company_id: currentCompanyId ?? undefined
+      }),
+      listBankTemplates({ limit: 500 }),
+      listJournalTemplates({ limit: 500 })
+    ])
       .then(([data, banks, journals]) => {
         if (!active) return;
-        setRows(data);
-        setBankTemplates(banks);
-        setJournalTemplates(journals);
+        setItems(data.items);
+        setTotal(data.total);
+        setBankTemplates(banks.items);
+        setJournalTemplates(journals.items);
       })
       .catch(() => {
-        if (active) setRows([]);
+        if (active) setItems([]);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -98,7 +114,7 @@ export function MappingProfilePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [page, pageSize, currentCompanyId]);
 
   // 打开弹窗时加载可选模板
   const openCreate = async () => {
@@ -109,9 +125,12 @@ export function MappingProfilePage() {
     setMappings([]);
     setModalOpen(true);
     try {
-      const [banks, journals] = await Promise.all([listBankTemplates(), listJournalTemplates()]);
-      setBankTemplates(banks);
-      setJournalTemplates(journals);
+      const [banks, journals] = await Promise.all([
+        listBankTemplates({ limit: 500 }),
+        listJournalTemplates({ limit: 500 })
+      ]);
+      setBankTemplates(banks.items);
+      setJournalTemplates(journals.items);
     } catch {
       // 加载失败不阻塞，允许手动输入列名
     }
@@ -307,9 +326,16 @@ export function MappingProfilePage() {
       <Table<MappingProfile>
         rowKey="id"
         columns={columns}
-        dataSource={rows}
+        dataSource={items}
         loading={loading}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 条`,
+          onChange: (p, ps) => { setPage(p); setPageSize(ps); }
+        }}
         onRow={(record) => ({
           onClick: () => navigate(`/bank-journal/templates/mapping/${record.id}`),
           style: { cursor: 'pointer' }
