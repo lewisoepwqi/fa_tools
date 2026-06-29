@@ -37,9 +37,13 @@ from app.tools.bank_journal.schemas.custom_field import (
     StandardFieldDef,
     StandardSchemaResponse,
 )
+from app.tools.bank_journal.schemas.standard import StandardBankTransaction
 from app.tools.bank_journal.services.parser_service import CustomFieldDef
 
 ALLOWED_DATA_TYPES = {"text", "amount", "date"}
+
+# StandardBankTransaction 标准字段名（去除容器字段），创建自定义字段时禁止冲突
+_STANDARD_FIELD_KEYS = set(StandardBankTransaction.model_fields) - {"extra_fields", "raw_row"}
 ALLOWED_STATUSES = {RecordStatus.ACTIVE.value, RecordStatus.INACTIVE.value}
 
 # 每种 data_type 的预分配槽位总数（用于配额计算）
@@ -119,6 +123,13 @@ def create_custom_field(db: Session, payload: CustomFieldCreate) -> CustomFieldR
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail=f"field_key '{payload.field_key}' conflicts with a built-in field",
+        )
+    # 拦截与 StandardBankTransaction 标准字段名冲突（BUILTIN_FIELD_KEYS 未覆盖的基础设施字段）。
+    # EvaluationContext 将 extra_fields 拍平到顶层命名空间，与标准字段同名时会静默覆盖。
+    if payload.field_key in _STANDARD_FIELD_KEYS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"field_key '{payload.field_key}' is a standard field; choose a different name",
         )
     existing = (
         db.query(CustomField)
