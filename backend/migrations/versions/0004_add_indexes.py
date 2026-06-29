@@ -12,12 +12,16 @@ branch_labels = None
 depends_on = None
 
 _INDEXES = [
-    ("ix_journal_preview_rows_run", "journal_preview_rows", ["conversion_run_id"]),
-    ("ix_bank_transactions_run", "bank_transactions", ["conversion_run_id"]),
+    ("ix_journal_preview_rows_conversion_run_id", "journal_preview_rows", ["conversion_run_id"]),
+    ("ix_bank_transactions_conversion_run_id", "bank_transactions", ["conversion_run_id"]),
     ("ix_bank_transactions_row_hash", "bank_transactions", ["row_hash"]),
-    ("ix_conversion_run_files_run", "conversion_run_files", ["conversion_run_id"]),
-    ("ix_conversion_run_rule_versions_run", "conversion_run_rule_versions", ["conversion_run_id"]),
-    ("ix_conversion_runs_company", "conversion_runs", ["company_id"]),
+    ("ix_conversion_run_files_conversion_run_id", "conversion_run_files", ["conversion_run_id"]),
+    (
+        "ix_conversion_run_rule_versions_conversion_run_id",
+        "conversion_run_rule_versions",
+        ["conversion_run_id"],
+    ),
+    ("ix_conversion_runs_company_id", "conversion_runs", ["company_id"]),
     (
         "ix_bank_template_versions_parent_ver",
         "bank_template_versions",
