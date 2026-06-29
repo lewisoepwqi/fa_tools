@@ -6,7 +6,41 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from app.core.crypto import mask_account
 from app.models.audit import AuditLog
+
+_SECRET_KEYS = {"password", "password_hash", "token", "access_token", "field_encryption_key", "secret_key"}
+_ACCOUNT_KEY_HINT = "account_no"
+
+
+def redact(payload: dict | None) -> dict | None:
+    """递归脱敏敏感字段。
+
+    密钥/口令类字段（password/password_hash/token 等）→ "***"
+    账号字段（名称包含 account_no）且为字符串 → mask_account(...)
+    嵌套 dict/list 递归处理。
+    None 透传。
+    """
+    if payload is None:
+        return None
+
+    def _walk(value):
+        if isinstance(value, dict):
+            out = {}
+            for k, v in value.items():
+                lk = str(k).lower()
+                if lk in _SECRET_KEYS:
+                    out[k] = "***"
+                elif _ACCOUNT_KEY_HINT in lk and isinstance(v, str):
+                    out[k] = mask_account(v)
+                else:
+                    out[k] = _walk(v)
+            return out
+        if isinstance(value, (list, tuple)):
+            return [_walk(i) for i in value]
+        return value
+
+    return _walk(payload)
 
 
 def _json_safe(value: Any) -> Any:
@@ -44,8 +78,8 @@ def build_audit_event(
         "action": action,
         "entity_type": entity_type,
         "entity_id": entity_id,
-        "before_json": _json_safe(before),
-        "after_json": _json_safe(after),
+        "before_json": _json_safe(redact(before)),
+        "after_json": _json_safe(redact(after)),
         "ip_address": ip_address,
         "user_agent": user_agent,
         "created_at": datetime.now(UTC).isoformat(),
