@@ -181,6 +181,21 @@ def test_standard_schema_merges_builtin_and_custom(client) -> None:
     assert schema["slot_quota"]["date"] == {"used": 0, "total": 2}
 
 
+def test_custom_field_key_colliding_with_standard_rejected(client) -> None:
+    # field_key 与标准字段 "bank_account_id" 冲突 → 422，避免拍平后覆盖标准字段
+    resp = client.post(
+        "/api/tools/bank-journal/custom-fields",
+        json={
+            "company_id": "company-1",
+            "field_key": "bank_account_id",
+            "name": "账户ID",
+            "data_type": "text",
+            "header_keywords": ["账户ID"],
+        },
+    )
+    assert resp.status_code == 422
+
+
 def test_delete_blocked_when_referenced_by_mapping(client) -> None:
     """扩展字段被映射方案引用时删除被拦截（保守策略）。"""
     # 1) 建扩展字段

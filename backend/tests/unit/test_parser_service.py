@@ -1,3 +1,4 @@
+import csv
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -5,10 +6,14 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
+from app.tools.bank_journal.domain.amounts import SignedAmount
 from app.tools.bank_journal.enums import AmountMode, ExceptionCode, TransactionDirection
 from app.tools.bank_journal.schemas.standard import StandardBankTransaction
 from app.tools.bank_journal.services.parser_service import (
     BankTemplateParseConfig,
+    _decimal_or_none,
+    _parse_amounts,
+    _read_rows,
     detect_bank_template_config,
     detect_header_row,
     parse_bank_rows,
@@ -449,3 +454,50 @@ def test_parse_signed_amount_negative_is_debit(tmp_path: Path) -> None:
     assert len(transactions) == 1
     assert transactions[0].direction == TransactionDirection.DEBIT
     assert transactions[0].net_amount == Decimal("-3000.00")
+
+
+def test_read_rows_decodes_gbk_csv(tmp_path):
+    path = tmp_path / "gbk.csv"
+    with path.open("w", encoding="gbk", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["日期", "摘要", "金额"])
+        writer.writerow(["2026-01-01", "工资", "100"])
+    rows = _read_rows(path, "csv", "")
+    assert rows[0] == ["日期", "摘要", "金额"]
+    assert rows[1][1] == "工资"
+
+
+def test_decimal_cleaning_variants():
+    assert _decimal_or_none("¥1,234.50") == Decimal("1234.50")
+    assert _decimal_or_none("（1,000.00）") == Decimal("-1000.00")  # 全角括号负数
+    assert _decimal_or_none("(1000)") == Decimal("-1000")
+    assert _decimal_or_none("500 DR") == Decimal("-500")
+    assert _decimal_or_none("500 CR") == Decimal("500")
+    assert _decimal_or_none("１２３") == Decimal("123")  # 全角数字
+
+
+# ---------------------------------------------------------------------------
+# Task 9: _parse_amounts 返回 SignedAmount + 负数翻向告警
+# ---------------------------------------------------------------------------
+
+
+def test_parse_amounts_returns_signed_amount():
+    sa = _parse_amounts(
+        {"income": "100", "expense": ""},
+        AmountMode.INCOME_EXPENSE_COLUMNS,
+        {"income": "income", "expense": "expense"},
+    )
+    assert isinstance(sa, SignedAmount)
+    assert sa.direction == TransactionDirection.CREDIT
+    assert sa.net_amount == Decimal("100")
+
+
+def test_parse_amounts_negative_income_flags_anomaly():
+    sa = _parse_amounts(
+        {"income": "-50", "expense": ""},
+        AmountMode.INCOME_EXPENSE_COLUMNS,
+        {"income": "income", "expense": "expense"},
+    )
+    assert sa.direction == TransactionDirection.DEBIT
+    assert sa.net_amount == Decimal("-50")
+    assert sa.sign_anomaly is True

@@ -9,6 +9,8 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.file import SourceFile
+from app.tools.bank_journal.domain.balance import check_balance_continuity
+from app.tools.bank_journal.domain.dedup import mark_duplicates, row_hash
 from app.tools.bank_journal.enums import AmountMode, ExceptionCode, PreviewStatus
 from app.tools.bank_journal.models.conversion import (
     BankTransaction,
@@ -45,6 +47,16 @@ from app.tools.bank_journal.services.parser_service import (
     parse_bank_rows,
 )
 from app.tools.bank_journal.services.rule_service import apply_rules
+
+# 携带任意一个此集合内的异常码时，AUTO_CONFIRMED 必须被降级为 NEEDS_CONFIRMATION。
+# 这些码全部由"事后处理"步骤（warnings 合并、去重、余额连续性）写入，
+# build_preview_row 在设定状态时尚未持有这些信息，故需在所有后处理完成后统一降级。
+_MUST_CONFIRM_CODES: frozenset[ExceptionCode] = frozenset({
+    ExceptionCode.AMOUNT_DIRECTION_MISMATCH,
+    ExceptionCode.DUPLICATE_IN_BATCH,
+    ExceptionCode.DUPLICATE_HISTORY,
+    ExceptionCode.BALANCE_DISCONTINUITY,
+})
 
 
 def build_preview_row(
@@ -121,7 +133,29 @@ def run_conversion(
     # 加载公司级扩展字段定义（识别 + 填充 + 落库槽位反查复用）
     custom_defs = load_custom_field_defs(db, payload.company_id)
 
+    # 从银行模板版本提取去重关键字段（无则用默认值）。
+    key_fields: list[str] | None = None
+    if payload.bank_template_version_id:
+        tv = db.get(BankTemplateVersion, payload.bank_template_version_id)
+        if tv is not None and tv.unique_key_config_json:
+            kf = list(tv.unique_key_config_json.get("fields") or [])
+            if kf:
+                key_fields = kf
+
+    # 本批写入前一次性查出该公司历史已提交批次的 row_hash 集合（本批尚未落库）。
+    history: set[str] = {
+        h
+        for (h,) in db.query(BankTransaction.row_hash)
+        .join(ConversionRun, BankTransaction.conversion_run_id == ConversionRun.id)
+        .filter(
+            ConversionRun.company_id == payload.company_id,
+            BankTransaction.row_hash.isnot(None),
+        )
+    }
+
     preview_rows: list[JournalPreviewRowData] = []
+    # 成功行追踪列表，用于批末去重标注：(bank_tx, preview_db_row, preview_rows 下标)。
+    success_entries: list[tuple[BankTransaction, JournalPreviewRow, int]] = []
     row_index = 1
     parse_failed_count = 0
     for source_file_id in payload.source_file_ids:
@@ -157,6 +191,9 @@ def run_conversion(
                 row_count=len(parsed_rows),
             )
         )
+
+        # 本文件的成功行追踪（余额连续性校验按文件隔离）。
+        file_success_entries: list[tuple[BankTransaction, JournalPreviewRow, int]] = []
 
         for parsed in parsed_rows:
             if parsed.transaction is None:
@@ -202,32 +239,115 @@ def run_conversion(
                 continue
 
             transaction = parsed.transaction
-            bank_tx = _build_bank_transaction(run.id, transaction, _slot_map_for(custom_defs))
-            db.add(bank_tx)
-
-            preview = build_preview_row(
-                transaction,
-                payload.mappings,
-                payload.rules,
-                payload.required_columns,
-                row_index,
-            )
-            preview_id = str(uuid4())
-            db.add(
-                JournalPreviewRow(
-                    id=preview_id,
-                    conversion_run_id=run.id,
-                    bank_transaction_id=bank_tx.id,
-                    row_index=row_index,
-                    output_values_json=preview.output_values,
-                    status=preview.status,
-                    exception_codes_json=preview.exception_codes,
-                    matched_rule_versions_json=preview.matched_rule_version_ids,
-                    rule_trace_json=preview.rule_trace,
+            try:
+                bank_tx = _build_bank_transaction(
+                    run.id, transaction, _slot_map_for(custom_defs)
                 )
+                bank_tx.row_hash = row_hash(transaction, key_fields)
+                preview = build_preview_row(
+                    transaction,
+                    payload.mappings,
+                    payload.rules,
+                    payload.required_columns,
+                    row_index,
+                )
+                db.add(bank_tx)  # stage only after both succeed → no orphan if preview throws
+                for code in parsed.warnings:
+                    if code not in preview.exception_codes:
+                        preview.exception_codes.append(code)
+            except Exception as exc:  # noqa: BLE001  单行隔离:任何处理错误降级为失败行,不中断整批
+                preview_id = str(uuid4())
+                db.add(
+                    JournalPreviewRow(
+                        id=preview_id,
+                        conversion_run_id=run.id,
+                        bank_transaction_id=None,
+                        row_index=row_index,
+                        output_values_json={"_processing_error": str(exc)},
+                        status=PreviewStatus.PARSE_FAILED,
+                        exception_codes_json=[ExceptionCode.INVALID_AMOUNT.value],
+                        matched_rule_versions_json=[],
+                        rule_trace_json=[],
+                    )
+                )
+                preview_rows.append(
+                    JournalPreviewRowData(
+                        id=preview_id,
+                        row_index=row_index,
+                        output_values={"_processing_error": str(exc)},
+                        status=PreviewStatus.PARSE_FAILED,
+                        exception_codes=[ExceptionCode.INVALID_AMOUNT],
+                        matched_rule_version_ids=[],
+                        rule_trace=[],
+                    )
+                )
+                parse_failed_count += 1
+                row_index += 1
+                continue
+            preview_id = str(uuid4())
+            preview_db_row = JournalPreviewRow(
+                id=preview_id,
+                conversion_run_id=run.id,
+                bank_transaction_id=bank_tx.id,
+                row_index=row_index,
+                output_values_json=preview.output_values,
+                status=preview.status,
+                exception_codes_json=[c.value for c in preview.exception_codes],
+                matched_rule_versions_json=preview.matched_rule_version_ids,
+                rule_trace_json=preview.rule_trace,
             )
-            preview_rows.append(preview.model_copy(update={"id": preview_id}))
+            db.add(preview_db_row)
+            preview_data = preview.model_copy(update={"id": preview_id})
+            preview_rows.append(preview_data)
+            pr_idx = len(preview_rows) - 1
+            success_entries.append((bank_tx, preview_db_row, pr_idx))
+            file_success_entries.append((bank_tx, preview_db_row, pr_idx))
             row_index += 1
+
+        # 余额连续性校验（按本文件 source_row_index 升序，隔离于其他文件）。
+        if file_success_entries:
+            file_success_entries.sort(key=lambda e: e[0].source_row_index)
+            balance_rows = [(bt.balance, bt.net_amount) for bt, _, _ in file_success_entries]
+            flags = check_balance_continuity(balance_rows)
+            for (_, preview_db_row, pr_idx), flag in zip(
+                file_success_entries, flags, strict=True
+            ):
+                if flag:
+                    ec_str = ExceptionCode.BALANCE_DISCONTINUITY.value
+                    existing_json = list(preview_db_row.exception_codes_json or [])
+                    if ec_str not in existing_json:
+                        existing_json.append(ec_str)
+                        preview_db_row.exception_codes_json = existing_json
+                    pdata = preview_rows[pr_idx]
+                    if ExceptionCode.BALANCE_DISCONTINUITY not in pdata.exception_codes:
+                        pdata.exception_codes.append(ExceptionCode.BALANCE_DISCONTINUITY)
+
+    # 批末去重标注：批内重复 + 历史重复。
+    if success_entries:
+        batch_hashes = [bt.row_hash for bt, _, _ in success_entries]
+        dup_codes = mark_duplicates(batch_hashes, history)  # type: ignore[arg-type]
+        for (_, preview_db_row, pr_idx), code in zip(success_entries, dup_codes, strict=True):
+            if code is not None:
+                ec_str = code.value
+                existing_json = list(preview_db_row.exception_codes_json or [])
+                if ec_str not in existing_json:
+                    existing_json.append(ec_str)
+                    preview_db_row.exception_codes_json = existing_json
+                pdata = preview_rows[pr_idx]
+                if code not in pdata.exception_codes:
+                    pdata.exception_codes.append(code)
+
+    # 最终降级：所有后处理（warnings / 去重 / 余额连续性）完成后，
+    # 若 AUTO_CONFIRMED 行持有任意"必须确认"异常码，强制降为 NEEDS_CONFIRMATION。
+    # 仅针对 AUTO_CONFIRMED；其他终态（CONFLICT/PARSE_FAILED/MANUALLY_CONFIRMED/IGNORED）不受影响。
+    for _, preview_db_row, pr_idx in success_entries:
+        pdata = preview_rows[pr_idx]
+        if (
+            pdata.status == PreviewStatus.AUTO_CONFIRMED
+            and _MUST_CONFIRM_CODES.intersection(pdata.exception_codes)
+        ):
+            pdata.status = PreviewStatus.NEEDS_CONFIRMATION
+            preview_db_row.status = PreviewStatus.NEEDS_CONFIRMATION
 
     run.summary_json = {
         "total_rows": len(preview_rows),
@@ -376,15 +496,23 @@ def dry_run_conversion(
                 parse_failed_count += 1
                 row_index += 1
                 continue
-            preview_rows.append(
-                build_preview_row(
-                    parsed.transaction,
-                    mappings,
-                    rules,
-                    [],
-                    row_index,
-                )
+            preview = build_preview_row(
+                parsed.transaction,
+                mappings,
+                rules,
+                [],
+                row_index,
             )
+            for code in parsed.warnings:
+                if code not in preview.exception_codes:
+                    preview.exception_codes.append(code)
+            # 降级：warnings 合并完成后，AUTO_CONFIRMED 行若持有"必须确认"异常码则降级。
+            if (
+                preview.status == PreviewStatus.AUTO_CONFIRMED
+                and _MUST_CONFIRM_CODES.intersection(preview.exception_codes)
+            ):
+                preview.status = PreviewStatus.NEEDS_CONFIRMATION
+            preview_rows.append(preview)
             row_index += 1
 
     return DryRunResponse(
@@ -588,12 +716,15 @@ def _build_bank_transaction(
         receipt_no=txn.receipt_no,
         raw_row_json=txn.raw_row,
     )
-    # 把 extra_fields 按 field_key → slot_key 反查，写入对应预分配列。
+    # 把 extra_fields 按 field_key → slot_key 反查,按类型转换后写入对应预分配列。
     if slot_map and txn.extra_fields:
         for field_key, value in txn.extra_fields.items():
             cf = slot_map.get(field_key)
-            if cf is not None and value is not None:
-                kwargs[cf.slot_key] = value
+            if cf is None or value is None:
+                continue
+            if cf.data_type == "date" and isinstance(value, str):
+                value = date.fromisoformat(value)
+            kwargs[cf.slot_key] = value
     return BankTransaction(**kwargs)
 
 

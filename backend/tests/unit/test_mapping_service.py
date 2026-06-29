@@ -77,6 +77,7 @@ def test_missing_rule_output_returns_none_for_preview_validation() -> None:
 
 
 def test_amount_field_mapping_returns_json_safe_value() -> None:
+    # apply_mappings 在输出边界将 Decimal 序列化为字符串,保证 JSON 列可存储。
     mappings = [{"target": "贷方金额", "type": "field", "source": "credit_amount"}]
 
     result = apply_mappings(_transaction(), mappings, rule_outputs={})
@@ -177,3 +178,35 @@ def test_conditional_mapping_supports_contains_operator() -> None:
     result = apply_mappings(_transaction(), mappings, rule_outputs={})
 
     assert result == {"科目": "应收账款"}
+
+
+def _txn(extra=None):
+    return StandardBankTransaction(
+        transaction_date="2026-01-01",
+        bank_account_id="acc-1",
+        direction=TransactionDirection.CREDIT,
+        net_amount=Decimal("100"),
+        summary="货款",
+        extra_fields=extra or {},
+        source_file_id="f-1",
+        source_sheet_name="S",
+        source_row_index=2,
+        raw_row={},
+    )
+
+
+def test_custom_field_as_mapping_source():
+    # 治本 #2:扩展字段作为映射来源不再抛错,而是取到值
+    mappings = [{"target": "部门", "type": "field", "source": "cost_center"}]
+    out = apply_mappings(_txn(extra={"cost_center": "CC-01"}), mappings, {})
+    assert out["部门"] == "CC-01"
+
+
+def test_conditional_mapping_still_works():
+    mappings = [{
+        "target": "类别", "type": "conditional",
+        "condition": {"field": "summary", "op": "contains", "value": "货款"},
+        "then_value": "营业收入", "else_value": "其他",
+    }]
+    out = apply_mappings(_txn(), mappings, {})
+    assert out["类别"] == "营业收入"

@@ -9,6 +9,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
+from app.tools.bank_journal.domain.amounts import AmountError, SignedAmount
 from app.tools.bank_journal.enums import AmountMode, ExceptionCode, TransactionDirection
 from app.tools.bank_journal.schemas.standard import StandardBankTransaction
 
@@ -97,6 +98,7 @@ class ParsedBankRow:
     transaction: StandardBankTransaction | None = None
     parse_errors: list[ExceptionCode] = field(default_factory=list)
     error_message: str | None = None
+    warnings: list[ExceptionCode] = field(default_factory=list)
 
 
 CellValue = str | date | datetime | int | float | Decimal | None
@@ -199,11 +201,7 @@ def _try_parse_row(
 
     # 金额/方向解析
     try:
-        direction, debit_amount, credit_amount, net_amount = _parse_amounts(
-            normalized_row,
-            config.amount_mode,
-            config.amount_config,
-        )
+        amount = _parse_amounts(normalized_row, config.amount_mode, config.amount_config)
     except ValueError as exc:
         message = str(exc)
         base.parse_errors.append(ExceptionCode.INVALID_AMOUNT)
@@ -211,6 +209,9 @@ def _try_parse_row(
             base.parse_errors[-1] = ExceptionCode.UNKNOWN_DIRECTION
         base.error_message = message
         return base
+
+    if amount.sign_anomaly:
+        base.warnings.append(ExceptionCode.AMOUNT_DIRECTION_MISMATCH)
 
     balance = _decimal_or_none(normalized_row.get("balance"))
 
@@ -238,10 +239,10 @@ def _try_parse_row(
         posting_date=posting_date,
         bank_account_id=config.bank_account_id,
         currency=config.currency,
-        direction=direction,
-        debit_amount=debit_amount,
-        credit_amount=credit_amount,
-        net_amount=net_amount,
+        direction=amount.direction,
+        debit_amount=amount.debit_amount,
+        credit_amount=amount.credit_amount,
+        net_amount=amount.net_amount,
         balance=balance,
         counterparty_name=_none_if_blank(normalized_row.get("counterparty_name")),
         counterparty_account_no=_none_if_blank(normalized_row.get("counterparty_account_no")),
@@ -450,13 +451,24 @@ def _detect_date_formats(
 
 
 
+def _read_csv_text(file_path: Path) -> str:
+    """按优先级尝试解码:UTF-8(含 BOM)→ GB18030(GBK/GB2312 超集)。"""
+    raw = file_path.read_bytes()
+    for encoding in ("utf-8-sig", "gb18030"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("Unable to decode CSV: tried utf-8 and gb18030")
+
+
 def _read_rows(path: str | Path, file_type: str, sheet_name: str) -> list[list[CellValue]]:
     file_path = Path(path)
     normalized_type = file_type.lower()
 
     if normalized_type == "csv":
-        with file_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            return [[_clean_cell(cell) for cell in row] for row in csv.reader(handle)]
+        text = _read_csv_text(file_path)
+        return [[_clean_cell(cell) for cell in row] for row in csv.reader(text.splitlines())]
 
     if normalized_type == "xlsx":
         workbook = load_workbook(file_path, read_only=True, data_only=True)
@@ -507,107 +519,44 @@ def _normalize_row(
 DIRECTION_KEYWORDS_CREDIT = {"收入", "贷", "贷方", "入", "credit", "income"}
 DIRECTION_KEYWORDS_DEBIT = {"支出", "借", "借方", "出", "debit", "expense"}
 
+_FULLWIDTH_MAP = str.maketrans(
+    "０１２３４５６７８９．，（）　",
+    "0123456789.,() ",
+)
+
 
 def _parse_amounts(
     normalized_row: dict[str, CellValue],
     amount_mode: AmountMode,
     amount_config: dict[str, str],
-) -> tuple[TransactionDirection, Decimal | None, Decimal | None, Decimal]:
+) -> SignedAmount:
     if amount_mode == AmountMode.INCOME_EXPENSE_COLUMNS:
-        return _parse_income_expense_columns(normalized_row, amount_config)
+        return SignedAmount.from_income_expense(
+            _decimal_or_none(normalized_row.get(amount_config["income"])),
+            _decimal_or_none(normalized_row.get(amount_config["expense"])),
+        )
     if amount_mode == AmountMode.DEBIT_CREDIT_COLUMNS:
-        return _parse_debit_credit_columns(normalized_row, amount_config)
+        return SignedAmount.from_debit_credit(
+            _decimal_or_none(normalized_row.get(amount_config["debit"])),
+            _decimal_or_none(normalized_row.get(amount_config["credit"])),
+        )
     if amount_mode == AmountMode.SINGLE_AMOUNT_WITH_DIRECTION:
-        return _parse_single_amount_with_direction(normalized_row, amount_config)
+        amount = _decimal_or_none(normalized_row.get(amount_config["amount"]))
+        if amount is None:
+            raise AmountError("Unable to determine transaction amount")
+        direction_raw = _clean_cell(normalized_row.get(amount_config["direction"]))
+        if not direction_raw:
+            raise AmountError("Missing direction for single amount mode")
+        direction = _direction_from_keyword(direction_raw)
+        if direction is None:
+            raise AmountError(f"Unknown direction value: {direction_raw}")
+        return SignedAmount.from_amount_with_direction(amount, direction)
     if amount_mode == AmountMode.SIGNED_AMOUNT:
-        return _parse_signed_amount(normalized_row, amount_config)
+        amount = _decimal_or_none(normalized_row.get(amount_config["amount"]))
+        if amount is None:
+            raise AmountError("Unable to determine transaction amount")
+        return SignedAmount.from_signed(amount)
     raise ValueError(f"Unsupported amount mode: {amount_mode}")
-
-
-def _parse_income_expense_columns(
-    normalized_row: dict[str, CellValue],
-    amount_config: dict[str, str],
-) -> tuple[TransactionDirection, Decimal | None, Decimal | None, Decimal]:
-    income = _decimal_or_none(normalized_row.get(amount_config["income"]))
-    expense = _decimal_or_none(normalized_row.get(amount_config["expense"]))
-
-    if (
-        income is not None
-        and expense is not None
-        and income != Decimal("0")
-        and expense != Decimal("0")
-    ):
-        raise ValueError("Both income and expense amounts are populated")
-
-    if income is not None and income != Decimal("0"):
-        return (
-            TransactionDirection.CREDIT,
-            None,
-            income,
-            income,
-        )
-
-    if expense is not None and expense != Decimal("0"):
-        return (
-            TransactionDirection.DEBIT,
-            expense,
-            None,
-            -expense,
-        )
-
-    raise ValueError("Unable to determine transaction amount")
-
-
-def _parse_debit_credit_columns(
-    normalized_row: dict[str, CellValue],
-    amount_config: dict[str, str],
-) -> tuple[TransactionDirection, Decimal | None, Decimal | None, Decimal]:
-    debit = _decimal_or_none(normalized_row.get(amount_config["debit"]))
-    credit = _decimal_or_none(normalized_row.get(amount_config["credit"]))
-
-    if debit is not None and credit is not None and debit != 0 and credit != 0:
-        raise ValueError("Both debit and credit amounts are populated")
-
-    if credit is not None and credit != Decimal("0"):
-        return TransactionDirection.CREDIT, None, credit, credit
-    if debit is not None and debit != Decimal("0"):
-        return TransactionDirection.DEBIT, debit, None, -debit
-    raise ValueError("Unable to determine transaction amount")
-
-
-def _parse_single_amount_with_direction(
-    normalized_row: dict[str, CellValue],
-    amount_config: dict[str, str],
-) -> tuple[TransactionDirection, Decimal | None, Decimal | None, Decimal]:
-    amount = _decimal_or_none(normalized_row.get(amount_config["amount"]))
-    if amount is None:
-        raise ValueError("Unable to determine transaction amount")
-
-    direction_raw = _clean_cell(normalized_row.get(amount_config["direction"]))
-    if not direction_raw:
-        raise ValueError("Missing direction for single amount mode")
-
-    direction = _direction_from_keyword(direction_raw)
-    if direction is None:
-        raise ValueError(f"Unknown direction value: {direction_raw}")
-
-    abs_amount = abs(amount)
-    if direction == TransactionDirection.CREDIT:
-        return TransactionDirection.CREDIT, None, abs_amount, abs_amount
-    return TransactionDirection.DEBIT, abs_amount, None, -abs_amount
-
-
-def _parse_signed_amount(
-    normalized_row: dict[str, CellValue],
-    amount_config: dict[str, str],
-) -> tuple[TransactionDirection, Decimal | None, Decimal | None, Decimal]:
-    amount = _decimal_or_none(normalized_row.get(amount_config["amount"]))
-    if amount is None:
-        raise ValueError("Unable to determine transaction amount")
-
-    if amount >= Decimal("0"):
-        return TransactionDirection.CREDIT, None, amount, amount
-    return TransactionDirection.DEBIT, -amount, None, amount
 
 
 def _direction_from_keyword(raw: str) -> TransactionDirection | None:
@@ -651,21 +600,40 @@ def _parse_optional_date(value: CellValue, date_formats: list[str]) -> str | Non
 def _decimal_or_none(value: CellValue) -> Decimal | None:
     if value is None:
         return None
-
     if isinstance(value, Decimal):
         return value
-
     if isinstance(value, (int, float)):
         return Decimal(str(value))
 
-    candidate = _clean_cell(value).replace(",", "")
+    candidate = _clean_cell(value)
+    if not candidate:
+        return None
+
+    # 全角 → 半角(数字、逗号、句点、括号、空格)
+    candidate = candidate.translate(_FULLWIDTH_MAP)
+    negative = False
+    # 会计括号负数:(1,000) / （1,000）
+    if candidate.startswith("(") and candidate.endswith(")"):
+        negative = True
+        candidate = candidate[1:-1]
+    # 方向后缀 DR/CR
+    upper = candidate.upper()
+    if upper.endswith("DR"):
+        negative = True
+        candidate = candidate[:-2]
+    elif upper.endswith("CR"):
+        candidate = candidate[:-2]
+    # 去货币符号、千分位、空白
+    for token in ("¥", "￥", "$", "CNY", "RMB", ",", " "):
+        candidate = candidate.replace(token, "")
     if not candidate:
         return None
 
     try:
-        return Decimal(candidate)
+        result = Decimal(candidate)
     except InvalidOperation as exc:
         raise ValueError(f"Invalid amount: {value}") from exc
+    return -result if negative else result
 
 
 def _clean_cell(value: object) -> str:

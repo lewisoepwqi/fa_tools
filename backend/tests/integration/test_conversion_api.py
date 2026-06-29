@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.core.config import get_settings
+from app.tools.bank_journal.models.conversion import BankTransaction
 
 
 @pytest.fixture()
@@ -398,3 +399,251 @@ def test_full_conversion_flow_end_to_end(client) -> None:
         "preview_row.adjusted", "preview_row.confirmed", "export.created",
     }:
         assert expected in actions, f"missing audit action: {expected}"
+
+
+def test_bad_mapping_isolated_per_row(client, upload_dir) -> None:
+    """单行映射错误不应中断整批——坏映射让每行降级到 parse_failed，整批返回 200。"""
+    upload = client.post(
+        "/api/files/upload",
+        files={
+            "file": (
+                "bank_statement_basic.csv",
+                (Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv").read_bytes(),
+                "text/csv",
+            )
+        },
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    response = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "入账日期": "posting_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "对方户名": "counterparty_name",
+                    "对方账号": "counterparty_account_no",
+                    "摘要": "summary",
+                    "用途": "purpose",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [
+                {"target": "科目", "type": "field", "source": "不存在字段"},
+            ],
+            "rules": [],
+            "required_columns": ["科目"],
+        },
+    )
+
+    assert response.status_code == 200  # 整批不再 500
+    rows = response.json()["preview_rows"]
+    assert len(rows) > 0
+    assert all(r["status"] == "parse_failed" for r in rows)  # 逐行降级而非整批崩
+
+
+def test_duplicate_row_in_batch_flagged_as_duplicate_in_batch(client, upload_dir) -> None:
+    """批次内两行数据完全相同时，第二行应被标注 DUPLICATE_IN_BATCH 异常码。"""
+    # 构造含两行相同记录的 CSV（仅流水号不同，关键字段完全一致）。
+    csv_bytes = (
+        "交易日期,入账日期,收入,支出,余额,对方户名,对方账号,摘要,用途,流水号\n"
+        "2026-01-01,,500.00,,9000.00,某公司,ACC001,货款,测试,TXN-DUP-1\n"
+        "2026-01-01,,500.00,,9000.00,某公司,ACC001,货款,测试,TXN-DUP-2\n"
+    ).encode()
+
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("dup_test.csv", csv_bytes, "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    response = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "对方户名": "counterparty_name",
+                    "对方账号": "counterparty_account_no",
+                    "摘要": "summary",
+                    "用途": "purpose",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [],
+            "rules": [],
+            "required_columns": [],
+        },
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["preview_rows"]
+    assert len(rows) == 2
+    assert "DUPLICATE_IN_BATCH" not in rows[0]["exception_codes"]
+    assert "DUPLICATE_IN_BATCH" in rows[1]["exception_codes"]
+
+
+def test_no_orphan_bank_transaction_when_all_rows_fail_preview(client_with_db, tmp_path) -> None:
+    """回归测试：build_preview_row 失败时不应留下孤儿 BankTransaction。
+
+    Bad mapping (source field does not exist) causes build_preview_row to throw
+    for every row, so every row lands in the except branch.  After the fix,
+    db.add(bank_tx) is only called AFTER build_preview_row succeeds, so no
+    BankTransaction rows should be persisted for the run.
+    """
+    import os
+
+    from app.core.config import get_settings
+
+    client, db = client_with_db
+
+    # Override UPLOAD_DIR so the file upload succeeds.
+    uploads = tmp_path / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    get_settings.cache_clear()
+    os.environ["UPLOAD_DIR"] = str(uploads)
+    get_settings.cache_clear()
+
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    response = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "入账日期": "posting_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "对方户名": "counterparty_name",
+                    "对方账号": "counterparty_account_no",
+                    "摘要": "summary",
+                    "用途": "purpose",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [
+                {"target": "科目", "type": "field", "source": "不存在字段"},
+            ],
+            "rules": [],
+            "required_columns": ["科目"],
+        },
+    )
+
+    assert response.status_code == 200
+    run_id = response.json()["id"]
+    rows = response.json()["preview_rows"]
+    assert len(rows) > 0
+    assert all(r["status"] == "parse_failed" for r in rows)
+
+    # Key regression assertion: no orphan BankTransaction rows for this run.
+    count = db.query(BankTransaction).filter(BankTransaction.conversion_run_id == run_id).count()
+    assert count == 0, (
+        f"Expected 0 BankTransaction rows for run {run_id}, got {count}. "
+        "Orphan bank_tx rows indicate db.add(bank_tx) was called before build_preview_row."
+    )
+
+    get_settings.cache_clear()
+
+
+def test_balance_discontinuity_flagged(client, upload_dir) -> None:
+    """余额跳变行应携带 BALANCE_DISCONTINUITY 异常码，连续行不应携带。"""
+    # 行1: income=500, balance=1500 → 首行不判
+    # 行2: income=300, balance=2300 → 预期 1500+300=1800，实际 2300 → 跳变
+    # 行3: income=100, balance=2400 → 2300+100=2400 → 连续（基准更新为前行实际值）
+    csv_bytes = (
+        "交易日期,收入,支出,余额,摘要,流水号\n"
+        "2026-01-01,500.00,,1500.00,货款,TXN-BAL-1\n"
+        "2026-01-02,300.00,,2300.00,货款,TXN-BAL-2\n"
+        "2026-01-03,100.00,,2400.00,货款,TXN-BAL-3\n"
+    ).encode()
+
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("balance_jump.csv", csv_bytes, "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    response = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "摘要": "summary",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [],
+            "rules": [],
+            "required_columns": [],
+        },
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["preview_rows"]
+    assert len(rows) == 3
+
+    codes_row0 = rows[0]["exception_codes"]
+    codes_row1 = rows[1]["exception_codes"]
+    codes_row2 = rows[2]["exception_codes"]
+
+    assert "BALANCE_DISCONTINUITY" not in codes_row0, "首行不应标注余额跳变"
+    assert "BALANCE_DISCONTINUITY" in codes_row1, "第二行余额跳变应被标注"
+    assert "BALANCE_DISCONTINUITY" not in codes_row2, "第三行余额连续不应标注"
