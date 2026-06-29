@@ -118,6 +118,11 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
     getConversionRun(runId).then(setRun).catch(() => {});
   };
 
+  // Task 9：动态日记账列——优先用后端返回的 journal_columns，兜底用硬编码常量
+  const journalColumns = useMemo(() => {
+    return run?.journal_columns?.length ? run.journal_columns : JOURNAL_COLUMNS;
+  }, [run]);
+
   // 统计：读 run.summary（不再全量 filter 计数）
   const stats = useMemo(() => {
     if (!run) return { total: 0, auto: 0, needs: 0, conflict: 0, parseFailed: 0 };
@@ -219,10 +224,11 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
   };
 
   const openEdit = (row: PreviewRow) => {
+    const firstCol = journalColumns[0] ?? '科目';
     setEditingRow(row);
     editForm.setFieldsValue({
-      field_name: '科目',
-      new_value: renderValue(row.output_values['科目']),
+      field_name: firstCol,
+      new_value: renderValue(row.output_values[firstCol]),
       reason: ''
     });
   };
@@ -260,7 +266,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
     try {
       const result = await createExport(run.id, {
         file_type: 'xlsx',
-        columns: JOURNAL_COLUMNS,
+        columns: journalColumns,
         only_confirmed: onlyConfirmed
       });
       message.success(`已生成导出（${result.row_count} 行）`);
@@ -272,6 +278,13 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
     }
   };
 
+  // 动态日记账列：按 journalColumns 顺序生成，每列从 output_values 取值
+  const dynamicCols: ColumnsType<PreviewRow> = journalColumns.map((col) => ({
+    title: col,
+    key: col,
+    render: (_: unknown, record: PreviewRow) => renderValue(record.output_values?.[col])
+  }));
+
   const columns: ColumnsType<PreviewRow> = [
     {
       title: '行号',
@@ -280,29 +293,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
       width: 64,
       render: (v) => <span className="num num-right">{renderValue(v)}</span>
     },
-    {
-      title: '日期',
-      key: '日期',
-      render: (_, record) => renderValue(record.output_values['日期'])
-    },
-    {
-      title: '摘要',
-      key: '摘要',
-      render: (_, record) => renderValue(record.output_values['摘要'])
-    },
-    {
-      title: '科目',
-      key: '科目',
-      render: (_, record) => renderValue(record.output_values['科目'])
-    },
-    {
-      title: '金额',
-      key: '金额',
-      align: 'right',
-      render: (_, record) => (
-        <span className="num num-right">{renderValue(record.output_values['金额'])}</span>
-      )
-    },
+    ...dynamicCols,
     {
       title: '状态',
       dataIndex: 'status',
@@ -537,7 +528,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
         <Form form={editForm} layout="vertical">
           <Form.Item name="field_name" label="字段" rules={[{ required: true }]}>
             <Select
-              options={JOURNAL_COLUMNS.map((c) => ({ value: c, label: c }))}
+              options={journalColumns.map((c) => ({ value: c, label: c }))}
             />
           </Form.Item>
           <Form.Item name="new_value" label="新值" rules={[{ required: true }]}>

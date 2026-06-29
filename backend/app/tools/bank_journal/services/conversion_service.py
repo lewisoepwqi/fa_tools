@@ -375,6 +375,11 @@ def run_conversion(
     }
     db.commit()
 
+    # 优先从绑定的日记账模板版本取列定义；无绑定则从本批预览行键并集回退。
+    journal_cols = _journal_columns_from_template(db, payload.company_journal_template_version_id)
+    if not journal_cols:
+        journal_cols = _journal_columns_from_rows_data(preview_rows)
+
     return ConversionRunResponse(
         id=run.id,
         status=run.status,
@@ -393,6 +398,7 @@ def run_conversion(
         bank_template_version_id=run.bank_template_version_id,
         company_journal_template_version_id=run.company_journal_template_version_id,
         mapping_profile_version_id=run.mapping_profile_version_id,
+        journal_columns=journal_cols,
     )
 
 
@@ -763,6 +769,54 @@ def _build_bank_transaction(
     return BankTransaction(**kwargs)
 
 
+def _extract_column_names(columns_json: list) -> list[str]:
+    """从 columns_json 提取列名字符串。
+
+    支持两种存储格式：
+    - list[str]：直接作为列名（如 ["日期","摘要","科目","金额"]）。
+    - list[dict]：从 dict 的 name / label / col 键取列名。
+    """
+    names: list[str] = []
+    for col in columns_json:
+        if isinstance(col, str):
+            names.append(col)
+        elif isinstance(col, dict):
+            name = col.get("name") or col.get("label") or col.get("col")
+            if name:
+                names.append(str(name))
+    return names
+
+
+def _journal_columns_from_template(db: Session, version_id: str | None) -> list[str]:
+    """若绑定了日记账模板版本且该版本有 columns_json，返回列名列表；否则返回空列表。"""
+    if not version_id:
+        return []
+    v = db.get(CompanyJournalTemplateVersion, version_id)
+    if v is None or not v.columns_json:
+        return []
+    return _extract_column_names(v.columns_json)
+
+
+def _journal_columns_from_rows_data(rows: list[JournalPreviewRowData]) -> list[str]:
+    """从内存预览行的 output_values 键并集（首次出现顺序）提取列名，过滤 _ 前缀内部键。"""
+    seen: dict[str, None] = {}
+    for row in rows:
+        for key in row.output_values:
+            if not key.startswith("_"):
+                seen[key] = None
+    return list(seen.keys())
+
+
+def _journal_columns_from_rows_db(rows: list[JournalPreviewRow]) -> list[str]:
+    """从 DB 预览行的 output_values_json 键并集（首次出现顺序）提取列名，过滤 _ 前缀内部键。"""
+    seen: dict[str, None] = {}
+    for row in rows:
+        for key in (row.output_values_json or {}):
+            if not key.startswith("_"):
+                seen[key] = None
+    return list(seen.keys())
+
+
 def _summary_from_json(raw: dict[str, object] | None) -> ConversionRunSummary:
     d = raw or {}
     return ConversionRunSummary(
@@ -866,6 +920,11 @@ def get_conversion_run(db: Session, run_id: str) -> ConversionRunResponse:
         .order_by(JournalPreviewRow.row_index.asc())
         .all()
     )
+    # 优先从绑定的日记账模板版本取列定义；无绑定则从持久化预览行键并集回退。
+    journal_cols = _journal_columns_from_template(db, run.company_journal_template_version_id)
+    if not journal_cols:
+        journal_cols = _journal_columns_from_rows_db(rows)
+
     return ConversionRunResponse(
         id=run.id,
         status=run.status,
@@ -878,4 +937,5 @@ def get_conversion_run(db: Session, run_id: str) -> ConversionRunResponse:
         bank_template_version_id=run.bank_template_version_id,
         company_journal_template_version_id=run.company_journal_template_version_id,
         mapping_profile_version_id=run.mapping_profile_version_id,
+        journal_columns=journal_cols,
     )

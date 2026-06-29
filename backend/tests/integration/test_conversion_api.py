@@ -1083,3 +1083,159 @@ def test_conversion_runs_list_paginated(client, seed_runs):
     body = resp.json()
     assert set(body) >= {"items", "total", "limit", "offset"}
     assert len(body["items"]) == 2 and body["total"] >= 3
+
+
+# ---------------------------------------------------------------------------
+# Task 9：journal_columns 动态列
+# ---------------------------------------------------------------------------
+
+def test_run_response_exposes_journal_columns_from_template(
+    client_with_db, admin_auth, tmp_path
+) -> None:
+    """绑定日记账模板版本时，GET 批次响应应携带 journal_columns = 模板 columns_json。"""
+    import os
+
+    from app.core.config import get_settings
+    from app.tools.bank_journal.models.template import CompanyJournalTemplateVersion
+
+    test_client, db = client_with_db
+    uploads = tmp_path / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    get_settings.cache_clear()
+    os.environ["UPLOAD_DIR"] = str(uploads)
+    get_settings.cache_clear()
+
+    expected_cols = ["日期", "摘要", "科目", "金额"]
+    cjtv = db.get(CompanyJournalTemplateVersion, "cjtv-1")
+    cjtv.columns_json = expected_cols
+    db.commit()
+
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
+    upload = test_client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+        headers=admin_auth,
+    ).json()
+
+    run = test_client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        headers=admin_auth,
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "company_journal_template_version_id": "cjtv-1",
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "摘要": "summary",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [
+                {"target": "日期", "type": "field", "source": "transaction_date"},
+                {"target": "摘要", "type": "field", "source": "summary"},
+                {"target": "金额", "type": "field", "source": "net_amount"},
+            ],
+            "rules": [],
+            "required_columns": [],
+        },
+    ).json()
+    run_id = run["id"]
+
+    resp = test_client.get(
+        f"/api/tools/bank-journal/conversion-runs/{run_id}",
+        headers=admin_auth,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["journal_columns"] == expected_cols
+
+    get_settings.cache_clear()
+
+
+def test_run_response_exposes_journal_columns_fallback_from_preview_rows(
+    client_with_db, admin_auth, tmp_path
+) -> None:
+    """無绑定模板时，journal_columns 从 preview rows output_values 键并集（保序）提取。"""
+    import os
+
+    from app.core.config import get_settings
+
+    test_client, db = client_with_db
+    uploads = tmp_path / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    get_settings.cache_clear()
+    os.environ["UPLOAD_DIR"] = str(uploads)
+    get_settings.cache_clear()
+
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
+    upload = test_client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+        headers=admin_auth,
+    ).json()
+
+    run = test_client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        headers=admin_auth,
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            # 无 company_journal_template_version_id → 走回退路径
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "摘要": "summary",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [
+                {"target": "日期", "type": "field", "source": "transaction_date"},
+                {"target": "摘要", "type": "field", "source": "summary"},
+                {"target": "金额", "type": "field", "source": "net_amount"},
+            ],
+            "rules": [],
+            "required_columns": [],
+        },
+    ).json()
+    run_id = run["id"]
+
+    resp = test_client.get(
+        f"/api/tools/bank-journal/conversion-runs/{run_id}",
+        headers=admin_auth,
+    )
+    assert resp.status_code == 200
+    cols = resp.json()["journal_columns"]
+    # 包含映射的三个输出列
+    assert "日期" in cols
+    assert "摘要" in cols
+    assert "金额" in cols
+    # 内部键（_ 前缀）不应出现
+    assert not any(c.startswith("_") for c in cols)
+    # 保序：映射顺序 日期 < 摘要 < 金额
+    assert cols.index("日期") < cols.index("摘要") < cols.index("金额")
+
+    get_settings.cache_clear()

@@ -30,6 +30,8 @@ export interface ConversionRunResponse {
   bank_template_version_id?: string | null;
   company_journal_template_version_id?: string | null;
   mapping_profile_version_id?: string | null;
+  /** Task 9：按绑定日记账模板版本 columns_json 动态渲染列；无绑定时由后端从预览行键并集回退。 */
+  journal_columns?: string[];
 }
 
 /** 批次列表项（不含预览行）。 */
