@@ -52,6 +52,11 @@ export function BankTemplatePage() {
   }, []);
 
   const handleSubmit = async (values: BankTemplateWizardValues) => {
+    // 防止模态框打开后公司切换为空时仍提交
+    if (!currentCompanyId) {
+      message.error('请先在右上角选择公司');
+      return;
+    }
     setCreating(true);
     try {
       await createBankTemplate({

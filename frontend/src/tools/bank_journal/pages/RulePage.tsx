@@ -72,11 +72,16 @@ export function RulePage() {
       message.error('请至少添加一个条件');
       return;
     }
+    // 防止模态框打开后公司切换为空时发送空字符串
+    if (!currentCompanyId) {
+      message.error('请先在右上角选择公司');
+      return;
+    }
     setCreating(true);
     try {
       const { conditions_json, actions_json } = ruleDataToBackend(ruleData);
       await createRule({
-        company_id: currentCompanyId ?? '',
+        company_id: currentCompanyId,
         name,
         version: {
           priority,

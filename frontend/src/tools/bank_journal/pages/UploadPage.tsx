@@ -78,6 +78,11 @@ export function UploadPage() {
   );
 
   const handleBeforeUpload = async (file: File) => {
+    // 权限门控：无 conversion_process 权限不允许上传
+    if (!canProcess) {
+      message.error('权限不足，无法上传流水文件');
+      return false;
+    }
     if (!currentCompanyId) {
       message.error('请先在右上角选择公司');
       return false;
@@ -178,6 +183,7 @@ export function UploadPage() {
           multiple
           accept=".csv,.xlsx"
           fileList={fileList}
+          disabled={!canProcess}
           beforeUpload={(file) => {
             void handleBeforeUpload(file as File);
             return false;
