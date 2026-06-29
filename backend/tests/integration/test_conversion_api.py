@@ -641,6 +641,85 @@ def test_rule_missing_version_id_returns_422(client, seeded_run_payload) -> None
     assert resp.status_code == 422
 
 
+def test_action_without_value_does_not_corrupt_row(client, upload_dir) -> None:
+    """回归测试：action 中无 value 键时规则匹配行不应被降级为 parse_failed。
+
+    ActionIn.value 默认 None；ConversionRunCreate 序列化时 model_dump(exclude_none=True)
+    会省略 value 键。rule_service 原用 action["value"] 直接下标，导致 KeyError，
+    被 conversion_service 的 except-all 捕获后将行错误降级为 parse_failed。
+    修复后改用 action.get("value")，None 是合法的覆盖值，行正常处理。
+
+    匹配条件：summary contains "货款" → 命中 bank_statement_basic.csv 第一行（row_index=0）。
+    第二行 summary="采购款" 不匹配规则 → needs_confirmation（NO_RULE_MATCH），不受影响。
+    """
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    response = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "入账日期": "posting_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "对方户名": "counterparty_name",
+                    "对方账号": "counterparty_account_no",
+                    "摘要": "summary",
+                    "用途": "purpose",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [
+                {"target": "日期", "type": "field", "source": "transaction_date"},
+                {"target": "科目", "type": "rule_output", "source": "account_subject"},
+                {"target": "金额", "type": "field", "source": "net_amount"},
+            ],
+            "rules": [
+                {
+                    "id": "rule-1",
+                    "version_id": "rule-version-1",
+                    "priority": 10,
+                    "conditions": {
+                        "all": [{"field": "summary", "op": "contains", "value": "货款"}]
+                    },
+                    # action has NO "value" key — mirrors ActionIn.model_dump(exclude_none=True)
+                    "actions": [{"field": "account_subject"}],
+                    "allow_auto_confirm": False,
+                }
+            ],
+            "required_columns": [],
+        },
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["preview_rows"]
+    # Row index 1 (CSV data row 1) matches the condition (货款).
+    # Before fix: KeyError on action["value"] is swallowed by except-all → parse_failed.
+    # After fix: action.get("value") returns None → row processed normally → needs_confirmation.
+    matched_row = next(r for r in rows if r["row_index"] == 1)
+    assert matched_row["status"] != "parse_failed", (
+        "Matched row must not be parse_failed — action with no value should not KeyError"
+    )
+    assert matched_row["status"] == "needs_confirmation"
+
+
 def test_balance_discontinuity_flagged(client, upload_dir) -> None:
     """余额跳变行应携带 BALANCE_DISCONTINUITY 异常码，连续行不应携带。"""
     # 行1: income=500, balance=1500 → 首行不判
