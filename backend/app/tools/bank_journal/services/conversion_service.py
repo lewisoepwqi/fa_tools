@@ -820,10 +820,12 @@ def _preview_row_to_data(row: JournalPreviewRow) -> JournalPreviewRowData:
 
 
 def list_preview_rows(
-    db: Session, run_id: str, limit: int, offset: int
+    db: Session, run_id: str, limit: int, offset: int, status: str | None = None
 ) -> Page[JournalPreviewRowData]:
-    """分页返回某批次的日记账预览行，按 row_index 升序。"""
+    """分页返回某批次的日记账预览行，按 row_index 升序。status 非 None 时按状态过滤。"""
     base = db.query(JournalPreviewRow).filter(JournalPreviewRow.conversion_run_id == run_id)
+    if status:
+        base = base.filter(JournalPreviewRow.status == status)
     total = base.count()
     rows = base.order_by(JournalPreviewRow.row_index).offset(offset).limit(limit).all()
     return Page[JournalPreviewRowData](

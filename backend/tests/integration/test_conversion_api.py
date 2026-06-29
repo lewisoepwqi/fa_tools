@@ -995,3 +995,16 @@ def test_run_summary_carries_status_counts(client, seed_run_with_mixed_statuses)
         + summary["parse_failed_rows"]
     )
     assert counted <= summary["total_rows"]
+
+
+def test_preview_rows_filter_by_status(client, seed_run_with_mixed_statuses):
+    """preview-rows 端点支持 status 过滤，返回结果应只含指定状态行，total 反映过滤后总数。"""
+    run_id = seed_run_with_mixed_statuses
+    resp = client.get(
+        f"/api/tools/bank-journal/conversion-runs/{run_id}/preview-rows",
+        params={"status": "needs_confirmation", "limit": 500},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] >= 1
+    assert all(r["status"] == "needs_confirmation" for r in body["items"])
