@@ -18,6 +18,10 @@ class SignedAmount:
     direction: TransactionDirection
     sign_anomaly: bool = False  # 原始值为负导致方向翻转,供上层标记 AMOUNT_DIRECTION_MISMATCH
 
+    def __post_init__(self) -> None:
+        if self.magnitude < _ZERO:
+            raise AmountError(f"magnitude must be >= 0, got {self.magnitude}")
+
     @property
     def net_amount(self) -> Decimal:
         return self.magnitude if self.direction == TransactionDirection.CREDIT else -self.magnitude
@@ -45,8 +49,8 @@ class SignedAmount:
     def from_income_expense(
         cls, income: Decimal | None, expense: Decimal | None
     ) -> SignedAmount:
-        inc = income or _ZERO
-        exp = expense or _ZERO
+        inc = income if income is not None else _ZERO
+        exp = expense if expense is not None else _ZERO
         if inc != _ZERO and exp != _ZERO:
             raise AmountError("Both income and expense amounts are populated")
         if inc != _ZERO:
@@ -57,8 +61,8 @@ class SignedAmount:
 
     @classmethod
     def from_debit_credit(cls, debit: Decimal | None, credit: Decimal | None) -> SignedAmount:
-        deb = debit or _ZERO
-        cre = credit or _ZERO
+        deb = debit if debit is not None else _ZERO
+        cre = credit if credit is not None else _ZERO
         if deb != _ZERO and cre != _ZERO:
             raise AmountError("Both debit and credit amounts are populated")
         if cre != _ZERO:

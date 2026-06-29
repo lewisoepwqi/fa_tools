@@ -39,3 +39,47 @@ def test_both_columns_populated_raises():
 def test_signed_amount_factory():
     assert SignedAmount.from_signed(Decimal("-5")).direction == TransactionDirection.DEBIT
     assert SignedAmount.from_signed(Decimal("5")).direction == TransactionDirection.CREDIT
+
+
+# --- from_debit_credit ---
+
+def test_debit_credit_positive_debit():
+    sa = SignedAmount.from_debit_credit(Decimal("200"), None)
+    assert sa.direction == TransactionDirection.DEBIT
+    assert sa.net_amount == Decimal("-200")
+    assert sa.debit_amount == Decimal("200")
+    assert sa.credit_amount is None
+
+
+def test_debit_credit_positive_credit():
+    sa = SignedAmount.from_debit_credit(None, Decimal("150"))
+    assert sa.direction == TransactionDirection.CREDIT
+    assert sa.net_amount == Decimal("150")
+    assert sa.credit_amount == Decimal("150")
+    assert sa.debit_amount is None
+
+
+def test_debit_credit_both_populated_raises():
+    with pytest.raises(AmountError):
+        SignedAmount.from_debit_credit(Decimal("10"), Decimal("20"))
+
+
+# --- from_amount_with_direction ---
+
+def test_from_amount_with_direction_positive():
+    sa = SignedAmount.from_amount_with_direction(Decimal("75"), TransactionDirection.DEBIT)
+    assert sa.direction == TransactionDirection.DEBIT
+    assert sa.magnitude == Decimal("75")
+
+
+def test_from_amount_with_direction_strips_sign():
+    sa = SignedAmount.from_amount_with_direction(Decimal("-30"), TransactionDirection.CREDIT)
+    assert sa.direction == TransactionDirection.CREDIT
+    assert sa.magnitude == Decimal("30")
+
+
+# --- magnitude invariant ---
+
+def test_negative_magnitude_raises():
+    with pytest.raises(AmountError):
+        SignedAmount(magnitude=Decimal("-1"), direction=TransactionDirection.DEBIT)
