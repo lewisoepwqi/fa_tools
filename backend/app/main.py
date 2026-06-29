@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import audit, auth, files
+from app.api.routes import admin, audit, auth, files
 from app.core.config import get_settings
 from app.tools.bank_journal import register as register_bank_journal
 
@@ -16,7 +16,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# 平台共享路由（认证、文件上传、审计日志）。
+# 平台共享路由（认证、文件上传、审计日志、管理）。
+app.include_router(admin.router)
 app.include_router(auth.router)
 app.include_router(audit.router)
 app.include_router(files.router)
