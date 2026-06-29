@@ -268,9 +268,24 @@ cd backend && alembic upgrade head
 
 3. **`BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD`**：默认 `admin@example.com` / `changeme`。首次部署迁移后必须立即通过管理员接口改密，或在迁移前用环境变量设置强密码。
 
-4. **已知功能缺口（后续补）**：
+4. **已知功能缺口 → 已划入 W5**（见下方「W3 收尾结论」）：
    - 跨公司角色（admin/auditor）前端无法指定具体公司创建数据——缺 `GET /api/companies` 列表端点，前端公司选择器写死。
    - 模板/规则等的启用/停用 Switch 前端未做权限门控（processor/reviewer 也能看到开关，但点击会被后端拒绝，属技术债）。
+
+---
+
+### W3 收尾结论（2026-06-29 闭合）
+
+W3 安全加固已随 **PR #13 合并到 main**，本次收尾盘点结论：
+
+- **验证全绿**：后端 `.venv/bin/pytest -q` → **303 passed**；lint → `.venv/bin/python -m ruff check .` → All checks passed（注：本环境 ruff 装在 `.venv` 里，用 `python -m ruff` 调用，PATH 上无独立 `ruff`）；前端 `npm run build` → exit 0（仅既有 AntD 单 chunk ~1.3MB 体积警告，属已记录技术债，非阻塞）。
+- **spec 残留核对**：W3 spec §6.2 注脚明确——`*.modified` / `*.disabled` / `rule.priority_changed` 审计事件依赖各自编辑端点，**W3 不强制补全**。这些编辑端点（gap P0-1 / P2-4）现已划归 **W5**，对应审计事件随 W5 一并补齐。W3 自身范围（鉴权 / RBAC / 租户隔离 / 字段加密 / SQLite FK pragma / 审计脱敏 + login/user.created/permission.changed）已全部落地。
+- **§4 两项功能缺口 → 推迟并入 W5**（决策依据：两项均为前端能力且依赖 W5 端点）：
+  1. `GET /api/companies` 列表端点 + 前端公司选择器去写死——与 W5「上传页配置选择器去写死」（gap §5 #3）同源，公司切换器需该 list 端点。归 W5。
+  2. 模板/规则启停 Switch 前端权限门控——依赖 W5 的 `PATCH /{id}/status` 端点 + 前端 RBAC 门控。归 W5。
+- **顺带发现（待 W5 brainstorm 校准）**：代码库已超出 `gap-analysis.md`（2026-06-27 生成）的描述，新增了「自定义字段」相关能力（`CustomFieldPage`、`BankTemplateWizard`、`useStandardFields`、custom-fields 端点等）。W5 开工前需重新核对 gap §5 前端缺口清单，避免按过时清单返工。
+
+**W3 工作流自此闭合**，剩余项去向如上，全部转入 W5 / W4。
 
 ---
 

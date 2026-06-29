@@ -5,6 +5,12 @@
 > 核查方式：逐条 grep + 引用代码行号验证（3 个并行审计覆盖后端引擎 / 导出确认 / 认证版本化前端三个领域）
 > 结论：当前实现 = PRD 的"最小可跑通骨架"，离 MVP 验收标准仍有系统性缺口
 
+> **状态更新（2026-06-29，W3 闭合时）**：
+> - **W3 已闭合**：§4 的 P2-1（认证）/ P2-2（RBAC）/ P2-3（login·user.created·permission.changed 审计）已由 W3 解决（见各条 ✅ 注）。
+> - **归 W5（用户已拍板）**：P0-1（编辑=新版本端点）、P2-4（启停 `PATCH /status`、规则 reorder）及其前端 UI、§5 全部前端缺口，统一在 **W5 前端工作流**实现；`*.modified`/`*.disabled`/`rule.priority_changed` 审计随这些端点补齐。另含 handover「生产部署须知 §4」两项（`GET /api/companies` 公司选择器、启停 Switch 门控）。
+> - **归 W4**：仅数据运维（迁移契约/PG 实测/异步）；P1-3 去重·余额连续性是否纳入 W4 由 brainstorm 与用户确认。
+> - **本文档已过时风险**：生成于 2026-06-27，其后代码库新增「自定义字段」相关能力（`CustomFieldPage`/`BankTemplateWizard`/custom-fields 端点等），§5 前端清单需在 W5 brainstorm 阶段以最新代码重新核对，勿照旧清单返工。
+
 ---
 
 ## 0. 阅读说明
