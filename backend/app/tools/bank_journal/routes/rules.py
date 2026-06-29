@@ -354,10 +354,13 @@ def reorder_rules(
     为每条规则创建一个新版本承载新 priority（保持版本化不可变语义）。
     """
     updated: list[dict[str, Any]] = []
+    # 收集每条被重排规则的公司归属，供审计用
+    audit_items: list[tuple[str, str]] = []  # (rule_id, company_id)
     for item in payload.items:
         parent = _get_rule_or_404(db, item.rule_id)  # 校验规则存在
         # 派生公司写校验：reorder 按 rule_id 携带，逐条校验其公司可访问
         require_company_access(user, parent.company_id)
+        audit_items.append((item.rule_id, parent.company_id))
         before_latest = _latest_rule_version(db, item.rule_id)
         if before_latest is None:
             raise HTTPException(
@@ -380,16 +383,18 @@ def reorder_rules(
         db.add(new_version)
         updated.append({"rule_id": item.rule_id, "priority": item.priority})
     db.commit()
-    record_audit_event(
-        db,
-        company_id=None,
-        actor_id=user.id,
-        action="rule.priority_changed",
-        entity_type="rule",
-        entity_id=",".join(item.rule_id for item in payload.items),
-        after={"updated": updated},
-        **audit_ctx(request),
-    )
+    # 按规则各自所属公司逐条写审计，确保 company_id 正确记录
+    for rule_id, company_id in audit_items:
+        record_audit_event(
+            db,
+            company_id=company_id,
+            actor_id=user.id,
+            action="rule.priority_changed",
+            entity_type="rule",
+            entity_id=rule_id,
+            after={"updated": updated},
+            **audit_ctx(request),
+        )
     return {"updated": updated}
 
 
