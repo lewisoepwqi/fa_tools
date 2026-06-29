@@ -48,6 +48,16 @@ from app.tools.bank_journal.services.parser_service import (
 )
 from app.tools.bank_journal.services.rule_service import apply_rules
 
+# 携带任意一个此集合内的异常码时，AUTO_CONFIRMED 必须被降级为 NEEDS_CONFIRMATION。
+# 这些码全部由"事后处理"步骤（warnings 合并、去重、余额连续性）写入，
+# build_preview_row 在设定状态时尚未持有这些信息，故需在所有后处理完成后统一降级。
+_MUST_CONFIRM_CODES: frozenset[ExceptionCode] = frozenset({
+    ExceptionCode.AMOUNT_DIRECTION_MISMATCH,
+    ExceptionCode.DUPLICATE_IN_BATCH,
+    ExceptionCode.DUPLICATE_HISTORY,
+    ExceptionCode.BALANCE_DISCONTINUITY,
+})
+
 
 def build_preview_row(
     transaction: StandardBankTransaction,
@@ -327,6 +337,18 @@ def run_conversion(
                 if code not in pdata.exception_codes:
                     pdata.exception_codes.append(code)
 
+    # 最终降级：所有后处理（warnings / 去重 / 余额连续性）完成后，
+    # 若 AUTO_CONFIRMED 行持有任意"必须确认"异常码，强制降为 NEEDS_CONFIRMATION。
+    # 仅针对 AUTO_CONFIRMED；其他终态（CONFLICT/PARSE_FAILED/MANUALLY_CONFIRMED/IGNORED）不受影响。
+    for _, preview_db_row, pr_idx in success_entries:
+        pdata = preview_rows[pr_idx]
+        if (
+            pdata.status == PreviewStatus.AUTO_CONFIRMED
+            and _MUST_CONFIRM_CODES.intersection(pdata.exception_codes)
+        ):
+            pdata.status = PreviewStatus.NEEDS_CONFIRMATION
+            preview_db_row.status = PreviewStatus.NEEDS_CONFIRMATION
+
     run.summary_json = {
         "total_rows": len(preview_rows),
         "parse_failed_rows": parse_failed_count,
@@ -484,6 +506,12 @@ def dry_run_conversion(
             for code in parsed.warnings:
                 if code not in preview.exception_codes:
                     preview.exception_codes.append(code)
+            # 降级：warnings 合并完成后，AUTO_CONFIRMED 行若持有"必须确认"异常码则降级。
+            if (
+                preview.status == PreviewStatus.AUTO_CONFIRMED
+                and _MUST_CONFIRM_CODES.intersection(preview.exception_codes)
+            ):
+                preview.status = PreviewStatus.NEEDS_CONFIRMATION
             preview_rows.append(preview)
             row_index += 1
 
