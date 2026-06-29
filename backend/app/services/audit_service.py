@@ -9,7 +9,14 @@ from sqlalchemy.orm import Session
 from app.core.crypto import mask_account
 from app.models.audit import AuditLog
 
-_SECRET_KEYS = {"password", "password_hash", "token", "access_token", "field_encryption_key", "secret_key"}
+_SECRET_KEYS = {
+    "password",
+    "password_hash",
+    "token",
+    "access_token",
+    "field_encryption_key",
+    "secret_key",
+}
 _ACCOUNT_KEY_HINT = "account_no"
 
 
