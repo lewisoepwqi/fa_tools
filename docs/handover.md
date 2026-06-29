@@ -108,11 +108,19 @@ fa_tools/
 
 ---
 
-## 5. API 端点清单（15 个）
+## 5. API 端点清单（21 个）
+
+> **⚠️ W3 起：除 `/health`、`/api/auth/login` 外，所有端点均要求 `Authorization: Bearer <JWT>` 头；缺失或过期返回 401。写操作额外按角色做 RBAC 检查（见"W3 安全模型"一节），涉及公司数据的操作额外做租户隔离校验。**
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/health` | 健康检查 |
+| GET | `/health` | 健康检查（无需认证） |
+| **POST** | **`/api/auth/login`** | **用户登录，返回 JWT access_token（无需认证）** |
+| **GET** | **`/api/auth/me`** | **获取当前登录用户信息** |
+| **POST** | **`/api/admin/users`** | **创建用户（仅 admin）** |
+| **GET** | **`/api/admin/users`** | **列出用户（仅 admin）** |
+| **PUT** | **`/api/admin/users/{id}/roles`** | **修改用户角色（仅 admin）** |
+| **PUT** | **`/api/admin/users/{id}/companies`** | **修改用户所属公司（仅 admin）** |
 | POST | `/api/files/upload` | 上传流水文件（multipart）→ 持久化 source_file |
 | POST | `/api/bank-templates` / GET | 银行模板 create/list（版本化） |
 | POST | `/api/journal-templates` / GET | 日记账模板 create/list |
@@ -123,9 +131,9 @@ fa_tools/
 | POST | `/api/preview-rows/{row_id}/confirm` | 确认预览行 |
 | POST | `/api/conversion-runs/{run_id}/exports` | 导出 CSV/XLSX |
 | GET | `/api/exports/{export_id}/download` | 下载导出文件 |
-| GET | `/api/audit-logs` | 审计日志列表 |
+| GET | `/api/audit-logs` | 审计日志列表（仅 admin/auditor） |
 
-**审计事件（9 类，在 create 端点自动记录）**：`file.uploaded`、`bank_template.created`、`journal_template.created`、`mapping_profile.created`、`rule.created`、`conversion_run.created`、`preview_row.adjusted`、`preview_row.confirmed`、`export.created`。
+**审计事件（12 类）**：`file.uploaded`、`bank_template.created`、`journal_template.created`、`mapping_profile.created`、`rule.created`、`conversion_run.created`、`preview_row.adjusted`、`preview_row.confirmed`、`export.created`；W3 新增：`login`（成功/失败均记录）、`user.created`、`permission.changed`。
 
 ---
 
@@ -215,18 +223,54 @@ cd backend && alembic upgrade head
 > **完整的 PRD 合规缺口（含本节之外的"真缺口"）见 [`gap-analysis.md`](./gap-analysis.md)**。
 > 该文档按 P0/P1/P2 分级、附 PRD 依据与代码证据，并区分"验收清单标 [x] 但实际未满足"与"主动推迟的非 MVP 项"。
 
-记录在 `docs/mvp-acceptance-checklist.md`，均为**非 MVP**：
+记录在 `docs/mvp-acceptance-checklist.md`：
 
 - **PostgreSQL 实测**：当前无 Docker，测试全在 SQLite。生产前需 `docker compose up -d postgres && alembic upgrade head` 验证迁移在 PG 上无误（注意：模型用通用 `JSON`，PG 会建为 `JSON` 而非 `JSONB`；如需 JSONB 索引/查询性能需后续调整）。
-- **账号字段加密**：`bank_accounts.account_no_encrypted`、`bank_transactions.counterparty_account_no_encrypted` 当前存**明文**（命名预留）。需引入加密（如 Fernet）+ 展示脱敏。
+- ✅ **W3 已完成 — 账号字段加密**：`bank_accounts.account_no_encrypted`、`bank_transactions.counterparty_account_no_encrypted` 已由 W3 引入 SQLAlchemy `EncryptedString` 类型（Fernet 对称加密），API 响应自动做展示掩码（前四后四、中间 `****`）。
 - **去重与余额连续性**：`bank_transactions.row_hash` 当前留空。需实现去重哈希（银行流水号优先，缺失用组合哈希）+ `DUPLICATE_IN_BATCH`/`DUPLICATE_HISTORY`/`BALANCE_DISCONTINUITY` 异常检测。
 - **规则引擎健壮性**：`rule_service` 的 `gte`/`lte` 操作符在字段为 `None` 时会抛 `InvalidOperation`（`balance` 等可选字段）。当前计划内规则只用 `contains`/`eq` 不触发；接入数值规则前需加 None 防护（TDD 补一个用例）。
 - **前端分包**：AntD 整包打入单 chunk（~1MB）。需 `manualChunks` 或动态 import 拆分。
 - **AntD message context**：使用了静态 `message` API，v5 会一次性警告；建议接入 `App` 组件的 `message` context。
-- **审计 ip/UA**：当前 `ip_address`/`user_agent` 留空。需从 `Request` 提取。
+- ✅ **W3 已完成 — 审计 ip/UA**：`ip_address`/`user_agent` 已由 W3 从 FastAPI `Request` 对象提取并持久化到 `audit_logs`。
+- ✅ **W3 已完成 — 审计脱敏**：审计快照（`before_state`/`after_state`）中的敏感字段（账号等）在写入 `audit_logs` 前由 `audit_service` 统一做 `redact` 处理，不落明文。
 - **金额模式**：`parser_service` 仅实现 `INCOME_EXPENSE_COLUMNS` 一种；enums 定义了 4 种（`SINGLE_AMOUNT_WITH_DIRECTION`/`DEBIT_CREDIT_COLUMNS`/`SIGNED_AMOUNT`），其余待补。
-- **认证/权限**：MVP 无 auth，路由在 payload 里带 `user-1`。需补 JWT + RBAC（5 类角色：管理员/模板管理员/财务处理员/复核员/审计员）。
+- ✅ **W3 已完成 — 认证/权限**：已实现 JWT Bearer 认证（HS256，8 小时有效期）+ 5 角色 RBAC（admin/template_admin/processor/reviewer/auditor）+ per-company 租户隔离。见下方"W3 安全模型"节及 `app/core/permissions.py`。
 - **异步任务**：解析/规则匹配当前同步。大文件（>10000 行）需引入 Celery/RQ（技术设计已规划）。
+
+---
+
+### W3 安全模型（2026-06-29 实施）
+
+| 维度 | 实现 |
+|---|---|
+| 鉴权 | JWT Bearer，HS256，有效期 `settings.access_token_ttl_minutes`（默认 480 min）；`POST /api/auth/login` 签发，其余端点 `get_current_user` 依赖强制校验 |
+| RBAC | 权限粒度；5 角色见 `app/core/permissions.py`：`admin`（全权）/ `template_admin`（模板配置）/ `processor`（上传+转换+导出）/ `reviewer`（审核确认）/ `auditor`（只读审计）；`require_permission(perm)` 装饰器在路由层检查 |
+| 租户隔离 | `user_companies` 多对多；`admin`/`auditor` 跨公司可见；其余角色：list 端点收窄到本用户公司，写操作走 `require_company_access` 校验 |
+| 字段加密 | Fernet `EncryptedString` 自定义 SQLAlchemy 类型；受保护列：`bank_accounts.account_no_encrypted`、`bank_transactions.counterparty_account_no_encrypted`；API 响应展示掩码（`****`），审计快照 redact |
+| 引导管理员 | 迁移 `0005_seed_bootstrap_admin.py` 按 `settings.bootstrap_admin_email` / `settings.bootstrap_admin_password` 播种初始 admin；**生产必须修改默认值**（见下方部署须知） |
+
+---
+
+### 生产部署须知（W3）
+
+> 以下配置当前使用**不安全的开发默认值**，上生产前**必须**通过环境变量覆盖：
+
+1. **`SECRET_KEY`**（JWT HMAC 密钥）：当前默认 `"development-secret"`，不足 32 字节会触发 `InsecureKeyLengthWarning`。生产须设置 ≥32 字节强随机密钥，例如：
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+
+2. **`FIELD_ENCRYPTION_KEY`**（Fernet 字段加密密钥）：当前为固定开发 Fernet key。生产须独立生成并通过环境变量注入：
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+   ⚠️ 更换 key 后既有密文**无法解密**，须先迁移数据或重新加密。
+
+3. **`BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD`**：默认 `admin@example.com` / `changeme`。首次部署迁移后必须立即通过管理员接口改密，或在迁移前用环境变量设置强密码。
+
+4. **已知功能缺口（后续补）**：
+   - 跨公司角色（admin/auditor）前端无法指定具体公司创建数据——缺 `GET /api/companies` 列表端点，前端公司选择器写死。
+   - 模板/规则等的启用/停用 Switch 前端未做权限门控（processor/reviewer 也能看到开关，但点击会被后端拒绝，属技术债）。
 
 ---
 

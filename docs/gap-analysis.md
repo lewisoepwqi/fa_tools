@@ -165,27 +165,33 @@
 | 项 | 内容 |
 |---|---|
 | PRD 依据 | §6.10.1 登录、§7 权限角色、技术设计 §3 Auth & RBAC |
-| 现状 | 无 JWT/session/密码校验，`deps.py` 只有 DB 依赖。路由靠请求体自报身份（`user-1`）。 |
-| 证据 | `app/api/deps.py` 仅 `DbSession`；`app/models/user.py:13` 有 `password_hash` 列但无读写；无登录端点 |
-| 性质 | 已在 handover §11 标注为非 MVP |
+| ~~现状~~ | ~~无 JWT/session/密码校验，`deps.py` 只有 DB 依赖。路由靠请求体自报身份（`user-1`）。~~ |
+| ~~证据~~ | ~~`app/api/deps.py` 仅 `DbSession`；`app/models/user.py:13` 有 `password_hash` 列但无读写；无登录端点~~ |
+| 性质 | ~~已在 handover §11 标注为非 MVP~~ |
+
+> ✅ **已由 W3 解决**（2026-06-29）：实现 JWT Bearer 认证（HS256，`POST /api/auth/login` 签发，`GET /api/auth/me` 查当前用户）；`app/api/deps.py` 新增 `get_current_user` 依赖，全平台端点强制 401 保护；`password_hash` 已接入 bcrypt 验证。
 
 ### P2-2. RBAC 5 角色未实现
 
 | 项 | 内容 |
 |---|---|
 | PRD 依据 | §7 五类角色（管理员/模板管理员/财务处理员/复核员/审计员） |
-| 现状 | `Role` 表存在但无 user_role 关联表、无任何角色检查中间件/依赖。 |
-| 证据 | `app/models/user.py:22-27` Role 表；grep `app/` 无 role 查询/权限检查 |
-| 性质 | 已在 handover §11 标注为非 MVP |
+| ~~现状~~ | ~~`Role` 表存在但无 user_role 关联表、无任何角色检查中间件/依赖。~~ |
+| ~~证据~~ | ~~`app/models/user.py:22-27` Role 表；grep `app/` 无 role 查询/权限检查~~ |
+| 性质 | ~~已在 handover §11 标注为非 MVP~~ |
+
+> ✅ **已由 W3 解决**（2026-06-29）：实现权限粒度 RBAC，5 角色（admin / template_admin / processor / reviewer / auditor）定义于 `app/core/permissions.py`；`user_companies` 多对多关联表实现 per-company 租户隔离；`require_permission(perm)` + `require_company_access` 依赖在各路由层校验。管理员 API（`/api/admin/users`）支持用户创建、角色变更、公司归属变更（均记录审计事件）。
 
 ### P2-3. 审计只记 CREATE，缺 MODIFY/停用/重排/登录/权限
 
 | 项 | 内容 |
 |---|---|
 | PRD 依据 | §6.10 列 8 类必须记录 |
-| 现状 | 9 个审计事件全是 `*.created`。缺 `*.modified` / `*.disabled` / `rule.priority_changed` / `login` / `permission.changed`。根因：这些操作端点本身都不存在。 |
-| 证据 | grep `record_audit_event` 仅 9 处，action 全为 `*.created`/`file.uploaded`/`export.created` |
+| 现状 | 9 个审计事件全是 `*.created`。缺 `*.modified` / `*.disabled` / `rule.priority_changed` / ~~`login`~~ / ~~`permission.changed`~~。根因：`*.modified`/`*.disabled`/`rule.priority_changed` 依赖 P0-1/P2-4 端点先存在。 |
+| 证据 | grep `record_audit_event` 确认 `*.modified`/`*.disabled` 仍缺；`login`/`user.created`/`permission.changed` 已补 |
 | 性质 | 部分依赖 P0-1/P2-4 端点先存在 |
+
+> ✅ **W3 部分解决**（2026-06-29）：`login`（成功/失败均记录，含 ip/UA）、`user.created`、`permission.changed` 三类审计事件已由 W3 补入；`ip_address`/`user_agent` 字段已从 `Request` 提取并持久化；审计快照已做 redact 脱敏。仍待解决：`*.modified`/`*.disabled`/`rule.priority_changed`（依赖 P0-1/P2-4 编辑端点先实现）。
 
 ### P2-4. 无停用/启用、无规则重排端点
 
