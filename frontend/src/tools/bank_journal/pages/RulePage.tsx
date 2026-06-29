@@ -7,7 +7,6 @@ import {
   useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Button, Input, InputNumber, Modal, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
@@ -24,6 +23,9 @@ import {
 } from '../components/RuleEditor';
 import { VersionBadge } from '../components/VersionBadge';
 import type { Rule } from '../types/rules';
+
+// 从 useSortable 推断拖拽监听器类型，避免依赖 @dnd-kit 私有路径
+type SyntheticListenerMap = NonNullable<ReturnType<typeof useSortable>['listeners']>;
 
 const EMPTY_RULE: RuleEditorData = { logic: 'all', conditions: [], actions: [] };
 
