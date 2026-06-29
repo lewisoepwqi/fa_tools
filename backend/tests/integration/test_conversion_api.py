@@ -1008,3 +1008,78 @@ def test_preview_rows_filter_by_status(client, seed_run_with_mixed_statuses):
     body = resp.json()
     assert body["total"] >= 1
     assert all(r["status"] == "needs_confirmation" for r in body["items"])
+
+
+# ---------------------------------------------------------------------------
+# W5-T4：批次列表分页
+# ---------------------------------------------------------------------------
+
+_MINIMAL_CSV = (
+    "交易日期,收入,支出,余额,摘要,流水号\n"
+    "2026-01-01,100.00,,1100.00,货款,TXN-SEED-{i}\n"
+).encode()
+
+_MINIMAL_PAYLOAD = {
+    "company_id": "company-1",
+    "bank_account_id": "bank-account-1",
+    "bank_parse_config": {
+        "file_type": "csv",
+        "sheet_name": "Sheet1",
+        "header_row_index": 0,
+        "data_start_row_index": 1,
+        "field_aliases": {
+            "交易日期": "transaction_date",
+            "收入": "income_amount",
+            "支出": "expense_amount",
+            "余额": "balance",
+            "摘要": "summary",
+            "流水号": "bank_transaction_id",
+        },
+        "amount_mode": "income_expense_columns",
+        "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+        "date_formats": ["%Y-%m-%d"],
+    },
+    "mappings": [],
+    "rules": [],
+    "required_columns": [],
+}
+
+
+@pytest.fixture()
+def seed_runs(client, upload_dir):
+    """工厂夹具：快速创建 N 条最小批次，返回 run id 列表。"""
+    def _seed(n: int) -> list[str]:
+        ids = []
+        for i in range(n):
+            csv_bytes = (
+                "交易日期,收入,支出,余额,摘要,流水号\n"
+                f"2026-01-01,100.00,,1100.00,货款,TXN-SEED-{i}\n"
+            ).encode()
+            upload = client.post(
+                "/api/files/upload",
+                files={"file": (f"seed_{i}.csv", csv_bytes, "text/csv")},
+                data={"company_id": "company-1", "uploaded_by": "user-1"},
+            ).json()
+            payload = dict(_MINIMAL_PAYLOAD)
+            payload["source_file_ids"] = [upload["id"]]
+            run = client.post(
+                "/api/tools/bank-journal/conversion-runs",
+                json=payload,
+            ).json()
+            ids.append(run["id"])
+        return ids
+
+    return _seed
+
+
+def test_conversion_runs_list_paginated(client, seed_runs):
+    """批次列表端点返回 Page 分页信封，limit 截断生效。"""
+    seed_runs(3)
+    resp = client.get(
+        "/api/tools/bank-journal/conversion-runs",
+        params={"limit": 2, "offset": 0},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) >= {"items", "total", "limit", "offset"}
+    assert len(body["items"]) == 2 and body["total"] >= 3

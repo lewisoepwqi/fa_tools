@@ -113,14 +113,20 @@ def dry_run(
 
 @router.get(
     "",
-    response_model=list[ConversionRunListItemResponse],
+    response_model=Page[ConversionRunListItemResponse],
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_runs(
-    db: DbSession, user: CurrentUserDep, company_id: str | None = None
-) -> list[ConversionRunListItemResponse]:
-    """批次列表（不含预览行），按创建时间倒序。仅返回当前用户可访问公司的批次。"""
-    return list_conversion_runs(db, company_id, accessible_company_filter(user))
+    db: DbSession,
+    user: CurrentUserDep,
+    company_id: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> Page[ConversionRunListItemResponse]:
+    """批次列表（不含预览行），按创建时间倒序，支持分页。仅返回当前用户可访问公司的批次。"""
+    return list_conversion_runs(
+        db, company_id, accessible_company_filter(user), limit=limit, offset=offset
+    )
 
 
 @router.get(

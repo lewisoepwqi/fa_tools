@@ -100,7 +100,7 @@ def test_list_conversion_runs_returns_items_without_preview_rows(
     response = c.get("/api/tools/bank-journal/conversion-runs", headers=hdrs)
 
     assert response.status_code == 200
-    items = response.json()
+    items = response.json()["items"]
     assert any(item["id"] == created["id"] for item in items)
     matched = next(item for item in items if item["id"] == created["id"])
     # 列表项不应携带预览行（避免大响应）
@@ -131,8 +131,8 @@ def test_list_conversion_runs_filter_by_company(
     )
 
     assert response.status_code == 200
-    assert len(response.json()) >= 1
-    assert response_other.json() == []
+    assert len(response.json()["items"]) >= 1
+    assert response_other.json()["items"] == []
 
 
 def test_get_conversion_run_detail_returns_preview_rows(client, upload_dir) -> None:
@@ -387,7 +387,7 @@ def test_conversion_run_snapshots_version_ids(
     assert detail["bank_template_version_id"] == "btv-1"
 
     # 列表端点也应返回版本快照
-    items = c.get("/api/tools/bank-journal/conversion-runs", headers=hdrs).json()
+    items = c.get("/api/tools/bank-journal/conversion-runs", headers=hdrs).json()["items"]
     matched = next(item for item in items if item["id"] == created["id"])
     assert matched["mapping_profile_version_id"] == "mpv-1"
 

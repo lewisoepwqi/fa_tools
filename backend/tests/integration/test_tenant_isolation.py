@@ -28,7 +28,7 @@ def test_list_runs_scoped_to_accessible_company(client_with_db, make_user, auth_
         "/api/tools/bank-journal/conversion-runs", headers=auth_headers(user)
     )
     assert r.status_code == 200
-    company_ids = {item["company_id"] for item in r.json()}
+    company_ids = {item["company_id"] for item in r.json()["items"]}
     assert company_ids == {"co-A"}
 
 
@@ -41,5 +41,5 @@ def test_admin_sees_all_companies(client_with_db, make_user, auth_headers):
         "/api/tools/bank-journal/conversion-runs", headers=auth_headers(user)
     )
     assert r.status_code == 200
-    company_ids = {item["company_id"] for item in r.json()}
+    company_ids = {item["company_id"] for item in r.json()["items"]}
     assert company_ids == {"co-A", "co-B"}

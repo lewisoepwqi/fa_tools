@@ -778,19 +778,27 @@ def list_conversion_runs(
     db: Session,
     company_id: str | None = None,
     accessible: set[str] | None = None,
-) -> list[ConversionRunListItemResponse]:
-    """返回所有批次（不含预览行），按创建时间倒序。
+    limit: int = 100,
+    offset: int = 0,
+) -> Page[ConversionRunListItemResponse]:
+    """返回所有批次（不含预览行），按创建时间倒序，支持分页。
 
     accessible 为 None 表示跨公司角色（不过滤）；为集合时仅返回集合内公司的批次
     （空集合→ in_([])→空结果，符合最小权限原则）。
     """
-    query = db.query(ConversionRun)
+    base = db.query(ConversionRun)
     if company_id is not None:
-        query = query.filter(ConversionRun.company_id == company_id)
+        base = base.filter(ConversionRun.company_id == company_id)
     if accessible is not None:
-        query = query.filter(ConversionRun.company_id.in_(accessible))
-    runs = query.order_by(ConversionRun.created_at.desc()).all()
-    return [
+        base = base.filter(ConversionRun.company_id.in_(accessible))
+    total = base.count()
+    runs = (
+        base.order_by(ConversionRun.created_at.desc(), ConversionRun.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    items = [
         ConversionRunListItemResponse(
             id=run.id,
             company_id=run.company_id,
@@ -805,6 +813,7 @@ def list_conversion_runs(
         )
         for run in runs
     ]
+    return Page(items=items, total=total, limit=limit, offset=offset)
 
 
 def _preview_row_to_data(row: JournalPreviewRow) -> JournalPreviewRowData:
