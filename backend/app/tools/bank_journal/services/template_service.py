@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.enums import RecordStatus
@@ -66,16 +67,30 @@ def list_bank_templates(db: Session, company_id: str | None = None) -> list[Bank
         query = query.filter(BankTemplate.company_id == company_id)
     # 软删除项不在列表/下拉中展示（删除仅置 status=deleted，行与版本保留）
     query = query.filter(BankTemplate.status != RecordStatus.DELETED.value)
-    out: list[BankTemplateResponse] = []
-    for parent in query.all():
-        latest = (
-            db.query(BankTemplateVersion)
-            .filter(BankTemplateVersion.bank_template_id == parent.id)
-            .order_by(BankTemplateVersion.version_no.desc())
-            .first()
+    parents = query.all()
+    if not parents:
+        return []
+    parent_ids = [p.id for p in parents]
+    latest_no = (
+        db.query(
+            BankTemplateVersion.bank_template_id.label("pid"),
+            func.max(BankTemplateVersion.version_no).label("mv"),
         )
-        out.append(_bank_template_to_response(parent, latest))
-    return out
+        .filter(BankTemplateVersion.bank_template_id.in_(parent_ids))
+        .group_by(BankTemplateVersion.bank_template_id)
+        .subquery()
+    )
+    versions = (
+        db.query(BankTemplateVersion)
+        .join(
+            latest_no,
+            (BankTemplateVersion.bank_template_id == latest_no.c.pid)
+            & (BankTemplateVersion.version_no == latest_no.c.mv),
+        )
+        .all()
+    )
+    by_parent = {v.bank_template_id: v for v in versions}
+    return [_bank_template_to_response(p, by_parent.get(p.id)) for p in parents]
 
 
 def get_bank_template(db: Session, template_id: str) -> BankTemplateResponse:
@@ -220,16 +235,30 @@ def list_journal_templates(
         query = query.filter(CompanyJournalTemplate.company_id == company_id)
     # 软删除项不在列表/下拉中展示
     query = query.filter(CompanyJournalTemplate.status != RecordStatus.DELETED.value)
-    out: list[CompanyJournalTemplateResponse] = []
-    for parent in query.all():
-        latest = (
-            db.query(CompanyJournalTemplateVersion)
-            .filter(CompanyJournalTemplateVersion.company_journal_template_id == parent.id)
-            .order_by(CompanyJournalTemplateVersion.version_no.desc())
-            .first()
+    parents = query.all()
+    if not parents:
+        return []
+    parent_ids = [p.id for p in parents]
+    latest_no = (
+        db.query(
+            CompanyJournalTemplateVersion.company_journal_template_id.label("pid"),
+            func.max(CompanyJournalTemplateVersion.version_no).label("mv"),
         )
-        out.append(_journal_template_to_response(parent, latest))
-    return out
+        .filter(CompanyJournalTemplateVersion.company_journal_template_id.in_(parent_ids))
+        .group_by(CompanyJournalTemplateVersion.company_journal_template_id)
+        .subquery()
+    )
+    versions = (
+        db.query(CompanyJournalTemplateVersion)
+        .join(
+            latest_no,
+            (CompanyJournalTemplateVersion.company_journal_template_id == latest_no.c.pid)
+            & (CompanyJournalTemplateVersion.version_no == latest_no.c.mv),
+        )
+        .all()
+    )
+    by_parent = {v.company_journal_template_id: v for v in versions}
+    return [_journal_template_to_response(p, by_parent.get(p.id)) for p in parents]
 
 
 def get_journal_template(

@@ -176,3 +176,28 @@ def test_list_rules_no_filter_returns_all(client) -> None:
 
     listed = client.get("/api/tools/bank-journal/rules").json()
     assert len(listed) == 2
+
+
+# ---------------------------------------------------------------------------
+# 回归：列表端点反映最新版本（N+1 优化后行为不变）
+# ---------------------------------------------------------------------------
+
+
+def test_list_bank_templates_reflects_latest_version(client) -> None:
+    """创建第 2 版本后，列表项 latest_version.version_no 应为 2。"""
+    tmpl_id = _create_bank_template(client, "中行CSV版本测试")
+    client.post(
+        f"/api/tools/bank-journal/bank-templates/{tmpl_id}/versions",
+        json={
+            "file_type": "csv",
+            "header_row_index": 0,
+            "data_start_row_index": 1,
+            "field_aliases_json": {"交易日期": "transaction_date", "摘要": "summary"},
+            "amount_mode": "income_expense_columns",
+            "date_formats_json": ["%Y-%m-%d"],
+            "created_by": "user-1",
+        },
+    )
+    listed = client.get("/api/tools/bank-journal/bank-templates").json()
+    match = next(m for m in listed if m["id"] == tmpl_id)
+    assert match["latest_version"]["version_no"] == 2

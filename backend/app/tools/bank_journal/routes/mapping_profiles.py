@@ -2,6 +2,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 from fastapi import status as http_status
+from sqlalchemy import func
 
 from app.api.deps import DbSession
 from app.core.enums import RecordStatus
@@ -83,16 +84,30 @@ def list_mapping_profiles(
         )
     # 软删除项不在列表/下拉中展示
     query = query.filter(MappingProfile.status != RecordStatus.DELETED.value)
-    out: list[MappingProfileResponse] = []
-    for parent in query.all():
-        latest = (
-            db.query(MappingProfileVersion)
-            .filter(MappingProfileVersion.mapping_profile_id == parent.id)
-            .order_by(MappingProfileVersion.version_no.desc())
-            .first()
+    parents = query.all()
+    if not parents:
+        return []
+    parent_ids = [p.id for p in parents]
+    latest_no = (
+        db.query(
+            MappingProfileVersion.mapping_profile_id.label("pid"),
+            func.max(MappingProfileVersion.version_no).label("mv"),
         )
-        out.append(_to_response(parent, latest))
-    return out
+        .filter(MappingProfileVersion.mapping_profile_id.in_(parent_ids))
+        .group_by(MappingProfileVersion.mapping_profile_id)
+        .subquery()
+    )
+    versions = (
+        db.query(MappingProfileVersion)
+        .join(
+            latest_no,
+            (MappingProfileVersion.mapping_profile_id == latest_no.c.pid)
+            & (MappingProfileVersion.version_no == latest_no.c.mv),
+        )
+        .all()
+    )
+    by_parent = {v.mapping_profile_id: v for v in versions}
+    return [_to_response(p, by_parent.get(p.id)) for p in parents]
 
 
 @router.get("/{profile_id}", response_model=MappingProfileResponse)
