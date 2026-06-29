@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.file import SourceFile
+from app.tools.bank_journal.domain.dedup import mark_duplicates, row_hash
 from app.tools.bank_journal.enums import AmountMode, ExceptionCode, PreviewStatus
 from app.tools.bank_journal.models.conversion import (
     BankTransaction,
@@ -121,7 +122,29 @@ def run_conversion(
     # 加载公司级扩展字段定义（识别 + 填充 + 落库槽位反查复用）
     custom_defs = load_custom_field_defs(db, payload.company_id)
 
+    # 从银行模板版本提取去重关键字段（无则用默认值）。
+    key_fields: list[str] | None = None
+    if payload.bank_template_version_id:
+        tv = db.get(BankTemplateVersion, payload.bank_template_version_id)
+        if tv is not None and tv.unique_key_config_json:
+            kf = list(tv.unique_key_config_json.get("fields") or [])
+            if kf:
+                key_fields = kf
+
+    # 本批写入前一次性查出该公司历史已提交批次的 row_hash 集合（本批尚未落库）。
+    history: set[str] = {
+        h
+        for (h,) in db.query(BankTransaction.row_hash)
+        .join(ConversionRun, BankTransaction.conversion_run_id == ConversionRun.id)
+        .filter(
+            ConversionRun.company_id == payload.company_id,
+            BankTransaction.row_hash.isnot(None),
+        )
+    }
+
     preview_rows: list[JournalPreviewRowData] = []
+    # 成功行追踪列表，用于批末去重标注：(bank_tx, preview_db_row, preview_rows 下标)。
+    success_entries: list[tuple[BankTransaction, JournalPreviewRow, int]] = []
     row_index = 1
     parse_failed_count = 0
     for source_file_id in payload.source_file_ids:
@@ -206,6 +229,7 @@ def run_conversion(
                 bank_tx = _build_bank_transaction(
                     run.id, transaction, _slot_map_for(custom_defs)
                 )
+                bank_tx.row_hash = row_hash(transaction, key_fields)
                 preview = build_preview_row(
                     transaction,
                     payload.mappings,
@@ -247,21 +271,37 @@ def run_conversion(
                 row_index += 1
                 continue
             preview_id = str(uuid4())
-            db.add(
-                JournalPreviewRow(
-                    id=preview_id,
-                    conversion_run_id=run.id,
-                    bank_transaction_id=bank_tx.id,
-                    row_index=row_index,
-                    output_values_json=preview.output_values,
-                    status=preview.status,
-                    exception_codes_json=preview.exception_codes,
-                    matched_rule_versions_json=preview.matched_rule_version_ids,
-                    rule_trace_json=preview.rule_trace,
-                )
+            preview_db_row = JournalPreviewRow(
+                id=preview_id,
+                conversion_run_id=run.id,
+                bank_transaction_id=bank_tx.id,
+                row_index=row_index,
+                output_values_json=preview.output_values,
+                status=preview.status,
+                exception_codes_json=[c.value for c in preview.exception_codes],
+                matched_rule_versions_json=preview.matched_rule_version_ids,
+                rule_trace_json=preview.rule_trace,
             )
-            preview_rows.append(preview.model_copy(update={"id": preview_id}))
+            db.add(preview_db_row)
+            preview_data = preview.model_copy(update={"id": preview_id})
+            preview_rows.append(preview_data)
+            success_entries.append((bank_tx, preview_db_row, len(preview_rows) - 1))
             row_index += 1
+
+    # 批末去重标注：批内重复 + 历史重复。
+    if success_entries:
+        batch_hashes = [bt.row_hash for bt, _, _ in success_entries]
+        dup_codes = mark_duplicates(batch_hashes, history)  # type: ignore[arg-type]
+        for (_, preview_db_row, pr_idx), code in zip(success_entries, dup_codes, strict=True):
+            if code is not None:
+                ec_str = code.value
+                existing_json = list(preview_db_row.exception_codes_json or [])
+                if ec_str not in existing_json:
+                    existing_json.append(ec_str)
+                    preview_db_row.exception_codes_json = existing_json
+                pdata = preview_rows[pr_idx]
+                if code not in pdata.exception_codes:
+                    pdata.exception_codes.append(code)
 
     run.summary_json = {
         "total_rows": len(preview_rows),

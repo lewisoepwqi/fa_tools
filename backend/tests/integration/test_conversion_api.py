@@ -456,6 +456,60 @@ def test_bad_mapping_isolated_per_row(client, upload_dir) -> None:
     assert all(r["status"] == "parse_failed" for r in rows)  # 逐行降级而非整批崩
 
 
+def test_duplicate_row_in_batch_flagged_as_duplicate_in_batch(client, upload_dir) -> None:
+    """批次内两行数据完全相同时，第二行应被标注 DUPLICATE_IN_BATCH 异常码。"""
+    # 构造含两行相同记录的 CSV（仅流水号不同，关键字段完全一致）。
+    csv_bytes = (
+        "交易日期,入账日期,收入,支出,余额,对方户名,对方账号,摘要,用途,流水号\n"
+        "2026-01-01,,500.00,,9000.00,某公司,ACC001,货款,测试,TXN-DUP-1\n"
+        "2026-01-01,,500.00,,9000.00,某公司,ACC001,货款,测试,TXN-DUP-2\n"
+    ).encode()
+
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("dup_test.csv", csv_bytes, "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    response = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "对方户名": "counterparty_name",
+                    "对方账号": "counterparty_account_no",
+                    "摘要": "summary",
+                    "用途": "purpose",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [],
+            "rules": [],
+            "required_columns": [],
+        },
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["preview_rows"]
+    assert len(rows) == 2
+    assert "DUPLICATE_IN_BATCH" not in rows[0]["exception_codes"]
+    assert "DUPLICATE_IN_BATCH" in rows[1]["exception_codes"]
+
+
 def test_no_orphan_bank_transaction_when_all_rows_fail_preview(client_with_db, tmp_path) -> None:
     """回归测试：build_preview_row 失败时不应留下孤儿 BankTransaction。
 
