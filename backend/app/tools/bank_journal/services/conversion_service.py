@@ -379,15 +379,17 @@ def dry_run_conversion(
                 parse_failed_count += 1
                 row_index += 1
                 continue
-            preview_rows.append(
-                build_preview_row(
-                    parsed.transaction,
-                    mappings,
-                    rules,
-                    [],
-                    row_index,
-                )
+            preview = build_preview_row(
+                parsed.transaction,
+                mappings,
+                rules,
+                [],
+                row_index,
             )
+            for code in parsed.warnings:
+                if code not in preview.exception_codes:
+                    preview.exception_codes.append(code)
+            preview_rows.append(preview)
             row_index += 1
 
     return DryRunResponse(
