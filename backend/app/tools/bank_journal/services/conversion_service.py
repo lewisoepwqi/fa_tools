@@ -202,19 +202,50 @@ def run_conversion(
                 continue
 
             transaction = parsed.transaction
-            bank_tx = _build_bank_transaction(run.id, transaction, _slot_map_for(custom_defs))
-            db.add(bank_tx)
-
-            preview = build_preview_row(
-                transaction,
-                payload.mappings,
-                payload.rules,
-                payload.required_columns,
-                row_index,
-            )
-            for code in parsed.warnings:
-                if code not in preview.exception_codes:
-                    preview.exception_codes.append(code)
+            try:
+                bank_tx = _build_bank_transaction(
+                    run.id, transaction, _slot_map_for(custom_defs)
+                )
+                db.add(bank_tx)
+                preview = build_preview_row(
+                    transaction,
+                    payload.mappings,
+                    payload.rules,
+                    payload.required_columns,
+                    row_index,
+                )
+                for code in parsed.warnings:
+                    if code not in preview.exception_codes:
+                        preview.exception_codes.append(code)
+            except Exception as exc:  # noqa: BLE001  单行隔离:任何处理错误降级为失败行,不中断整批
+                preview_id = str(uuid4())
+                db.add(
+                    JournalPreviewRow(
+                        id=preview_id,
+                        conversion_run_id=run.id,
+                        bank_transaction_id=None,
+                        row_index=row_index,
+                        output_values_json={"_processing_error": str(exc)},
+                        status=PreviewStatus.PARSE_FAILED,
+                        exception_codes_json=[ExceptionCode.INVALID_AMOUNT.value],
+                        matched_rule_versions_json=[],
+                        rule_trace_json=[],
+                    )
+                )
+                preview_rows.append(
+                    JournalPreviewRowData(
+                        id=preview_id,
+                        row_index=row_index,
+                        output_values={"_processing_error": str(exc)},
+                        status=PreviewStatus.PARSE_FAILED,
+                        exception_codes=[ExceptionCode.INVALID_AMOUNT],
+                        matched_rule_version_ids=[],
+                        rule_trace=[],
+                    )
+                )
+                parse_failed_count += 1
+                row_index += 1
+                continue
             preview_id = str(uuid4())
             db.add(
                 JournalPreviewRow(

@@ -398,3 +398,58 @@ def test_full_conversion_flow_end_to_end(client) -> None:
         "preview_row.adjusted", "preview_row.confirmed", "export.created",
     }:
         assert expected in actions, f"missing audit action: {expected}"
+
+
+def test_bad_mapping_isolated_per_row(client, upload_dir) -> None:
+    """单行映射错误不应中断整批——坏映射让每行降级到 parse_failed，整批返回 200。"""
+    upload = client.post(
+        "/api/files/upload",
+        files={
+            "file": (
+                "bank_statement_basic.csv",
+                (Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv").read_bytes(),
+                "text/csv",
+            )
+        },
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    response = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "入账日期": "posting_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "对方户名": "counterparty_name",
+                    "对方账号": "counterparty_account_no",
+                    "摘要": "summary",
+                    "用途": "purpose",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [
+                {"target": "科目", "type": "field", "source": "不存在字段"},
+            ],
+            "rules": [],
+            "required_columns": ["科目"],
+        },
+    )
+
+    assert response.status_code == 200  # 整批不再 500
+    rows = response.json()["preview_rows"]
+    assert len(rows) > 0
+    assert all(r["status"] == "parse_failed" for r in rows)  # 逐行降级而非整批崩
