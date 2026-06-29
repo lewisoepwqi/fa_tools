@@ -2,12 +2,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
-from app.api.deps import DbSession
+from app.api.deps import CurrentUserDep, DbSession, require
 from app.core.config import get_settings
-from app.services.audit_service import record_audit_event
+from app.core.permissions import Permission
+from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.enums import PreviewStatus
 from app.tools.bank_journal.models.conversion import (
     ConversionRun,
@@ -27,8 +28,18 @@ from app.tools.bank_journal.services.export_service import (
 router = APIRouter(tags=["exports"])
 
 
-@router.post("/api/tools/bank-journal/conversion-runs/{run_id}/exports")
-def create_export(run_id: str, payload: ExportCreate, db: DbSession) -> dict:
+@router.post(
+    "/api/tools/bank-journal/conversion-runs/{run_id}/exports",
+    dependencies=[Depends(require(Permission.EXPORT_RUN))],
+)
+def create_export(
+    run_id: str,
+    payload: ExportCreate,
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+) -> dict:
+    payload.exported_by = user.id
     run = db.query(ConversionRun).filter(ConversionRun.id == run_id).first()
     if run is None:
         raise HTTPException(
@@ -90,11 +101,12 @@ def create_export(run_id: str, payload: ExportCreate, db: DbSession) -> dict:
     record_audit_event(
         db,
         company_id=None,
-        actor_id=payload.exported_by,
+        actor_id=user.id,
         action="export.created",
         entity_type="export",
         entity_id=export_id,
         after=response,
+        **audit_ctx(request),
     )
     return response
 
@@ -185,7 +197,10 @@ def _build_export_report(
     }
 
 
-@router.get("/api/tools/bank-journal/exports/{export_id}/download")
+@router.get(
+    "/api/tools/bank-journal/exports/{export_id}/download",
+    dependencies=[Depends(require(Permission.EXPORT_RUN))],
+)
 def download_export(export_id: str, db: DbSession) -> FileResponse:
     export = db.query(Export).filter(Export.id == export_id).first()
     if export is None:
@@ -202,7 +217,10 @@ def download_export(export_id: str, db: DbSession) -> FileResponse:
     )
 
 
-@router.get("/api/tools/bank-journal/exports/{export_id}/report")
+@router.get(
+    "/api/tools/bank-journal/exports/{export_id}/report",
+    dependencies=[Depends(require(Permission.EXPORT_RUN))],
+)
 def download_export_report(export_id: str, db: DbSession) -> FileResponse:
     """下载处理报告（PRD §6.9.7）。"""
     export = db.query(Export).filter(Export.id == export_id).first()

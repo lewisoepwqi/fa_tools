@@ -1,8 +1,9 @@
 """公司级自定义扩展字段的 HTTP 路由。"""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from app.api.deps import DbSession
+from app.api.deps import CurrentUserDep, DbSession, require, require_company_access
+from app.core.permissions import Permission
 from app.tools.bank_journal.schemas.custom_field import (
     BuiltinFieldOverrideResponse,
     BuiltinFieldOverrideUpsert,
@@ -16,34 +17,57 @@ from app.tools.bank_journal.services import custom_field_service
 router = APIRouter(prefix="/api/tools/bank-journal/custom-fields", tags=["custom-fields"])
 
 
-@router.get("/standard-schema", response_model=StandardSchemaResponse)
+@router.get(
+    "/standard-schema",
+    response_model=StandardSchemaResponse,
+    dependencies=[Depends(require(Permission.READ))],
+)
 def get_standard_schema(db: DbSession, company_id: str) -> StandardSchemaResponse:
     """返回内置标准字段（含公司覆盖）+ 公司扩展字段的合并视图，供前端字段下拉运行时拉取。"""
     return custom_field_service.get_standard_schema(db, company_id)
 
 
-@router.get("", response_model=list[CustomFieldResponse])
+@router.get(
+    "",
+    response_model=list[CustomFieldResponse],
+    dependencies=[Depends(require(Permission.READ))],
+)
 def list_custom_fields(
     db: DbSession, company_id: str | None = None
 ) -> list[CustomFieldResponse]:
     return custom_field_service.list_custom_fields(db, company_id)
 
 
-@router.post("", response_model=CustomFieldResponse, status_code=201)
+@router.post(
+    "",
+    response_model=CustomFieldResponse,
+    status_code=201,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def create_custom_field(
-    db: DbSession, payload: CustomFieldCreate
+    db: DbSession, user: CurrentUserDep, payload: CustomFieldCreate
 ) -> CustomFieldResponse:
+    require_company_access(user, payload.company_id)
+    payload.created_by = user.id
     return custom_field_service.create_custom_field(db, payload)
 
 
-@router.patch("/{field_id}", response_model=CustomFieldResponse)
+@router.patch(
+    "/{field_id}",
+    response_model=CustomFieldResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def update_custom_field(
     db: DbSession, field_id: str, payload: CustomFieldUpdate
 ) -> CustomFieldResponse:
     return custom_field_service.update_custom_field(db, field_id, payload)
 
 
-@router.delete("/{field_id}", status_code=204)
+@router.delete(
+    "/{field_id}",
+    status_code=204,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def delete_custom_field(db: DbSession, field_id: str) -> None:
     custom_field_service.delete_custom_field(db, field_id)
 
@@ -53,22 +77,41 @@ def delete_custom_field(db: DbSession, field_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/builtin-overrides", response_model=list[BuiltinFieldOverrideResponse])
+@router.get(
+    "/builtin-overrides",
+    response_model=list[BuiltinFieldOverrideResponse],
+    dependencies=[Depends(require(Permission.READ))],
+)
 def list_builtin_overrides(
     db: DbSession, company_id: str
 ) -> list[BuiltinFieldOverrideResponse]:
     return custom_field_service.list_builtin_overrides(db, company_id)
 
 
-@router.put("/builtin-overrides/{field_key}", response_model=BuiltinFieldOverrideResponse)
+@router.put(
+    "/builtin-overrides/{field_key}",
+    response_model=BuiltinFieldOverrideResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def upsert_builtin_override(
-    db: DbSession, field_key: str, payload: BuiltinFieldOverrideUpsert
+    db: DbSession,
+    user: CurrentUserDep,
+    field_key: str,
+    payload: BuiltinFieldOverrideUpsert,
 ) -> BuiltinFieldOverrideResponse:
+    require_company_access(user, payload.company_id)
     # path 参数与 body 的 field_key 必须一致
     payload.field_key = field_key
     return custom_field_service.upsert_builtin_override(db, payload)
 
 
-@router.delete("/builtin-overrides/{field_key}", status_code=204)
-def delete_builtin_override(db: DbSession, field_key: str, company_id: str) -> None:
+@router.delete(
+    "/builtin-overrides/{field_key}",
+    status_code=204,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
+def delete_builtin_override(
+    db: DbSession, user: CurrentUserDep, field_key: str, company_id: str
+) -> None:
+    require_company_access(user, company_id)
     custom_field_service.delete_builtin_override(db, company_id, field_key)

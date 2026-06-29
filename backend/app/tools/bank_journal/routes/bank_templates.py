@@ -1,11 +1,17 @@
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.api.deps import DbSession
+from app.api.deps import (
+    CurrentUserDep,
+    DbSession,
+    require,
+    require_company_access,
+)
 from app.core.config import get_settings
+from app.core.permissions import Permission
 from app.models.file import SourceFile
-from app.services.audit_service import record_audit_event
+from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.models.conversion import ConversionRun
 from app.tools.bank_journal.models.mapping import MappingProfile
 from app.tools.bank_journal.models.template import BankTemplateVersion
@@ -32,24 +38,38 @@ router = APIRouter(
 )
 
 
-@router.post("", response_model=BankTemplateResponse)
+@router.post(
+    "",
+    response_model=BankTemplateResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def create_bank_template(
-    db: DbSession, payload: BankTemplateCreate
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    payload: BankTemplateCreate,
 ) -> BankTemplateResponse:
+    require_company_access(user, payload.company_id)
+    payload.version.created_by = user.id
     response = template_service.create_bank_template(db, payload)
     record_audit_event(
         db,
         company_id=response.company_id,
-        actor_id=response.latest_version.created_by,
+        actor_id=user.id,
         action="bank_template.created",
         entity_type="bank_template",
         entity_id=response.id,
         after=response.model_dump(),
+        **audit_ctx(request),
     )
     return response
 
 
-@router.post("/detect", response_model=BankTemplateDetectResponse)
+@router.post(
+    "/detect",
+    response_model=BankTemplateDetectResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def detect_bank_template(
     db: DbSession, payload: BankTemplateDetectRequest
 ) -> BankTemplateDetectResponse:
@@ -82,41 +102,62 @@ def detect_bank_template(
     return BankTemplateDetectResponse(**detected)
 
 
-@router.get("", response_model=list[BankTemplateResponse])
+@router.get(
+    "",
+    response_model=list[BankTemplateResponse],
+    dependencies=[Depends(require(Permission.READ))],
+)
 def list_bank_templates(
     db: DbSession, company_id: str | None = None
 ) -> list[BankTemplateResponse]:
     return template_service.list_bank_templates(db, company_id)
 
 
-@router.get("/{template_id}", response_model=BankTemplateResponse)
+@router.get(
+    "/{template_id}",
+    response_model=BankTemplateResponse,
+    dependencies=[Depends(require(Permission.READ))],
+)
 def get_bank_template(db: DbSession, template_id: str) -> BankTemplateResponse:
     """银行模板详情（含最新版本）。不存在则 404。"""
     return template_service.get_bank_template(db, template_id)
 
 
-@router.post("/{template_id}/versions", response_model=BankTemplateResponse)
+@router.post(
+    "/{template_id}/versions",
+    response_model=BankTemplateResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def create_bank_template_version(
-    db: DbSession, template_id: str, payload: BankTemplateVersionCreate
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    template_id: str,
+    payload: BankTemplateVersionCreate,
 ) -> BankTemplateResponse:
     """编辑银行模板=创建新版本（旧版本不可变，历史批次仍引用旧版本）。"""
     before = template_service.get_bank_template(db, template_id)
+    require_company_access(user, before.company_id)
+    payload.created_by = user.id
     response = template_service.create_bank_template_version(db, template_id, payload)
     record_audit_event(
         db,
         company_id=response.company_id,
-        actor_id=response.latest_version.created_by,
+        actor_id=user.id,
         action="bank_template.modified",
         entity_type="bank_template",
         entity_id=response.id,
         before=before.model_dump(),
         after=response.model_dump(),
+        **audit_ctx(request),
     )
     return response
 
 
 @router.get(
-    "/{template_id}/versions", response_model=list[BankTemplateVersionResponse]
+    "/{template_id}/versions",
+    response_model=list[BankTemplateVersionResponse],
+    dependencies=[Depends(require(Permission.READ))],
 )
 def list_bank_template_versions(
     db: DbSession, template_id: str
@@ -125,17 +166,26 @@ def list_bank_template_versions(
     return template_service.list_bank_template_versions(db, template_id)
 
 
-@router.patch("/{template_id}/status", response_model=BankTemplateResponse)
+@router.patch(
+    "/{template_id}/status",
+    response_model=BankTemplateResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def update_bank_template_status(
-    db: DbSession, template_id: str, status: str
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    template_id: str,
+    status: str,
 ) -> BankTemplateResponse:
     """停用/启用银行模板（status: active|inactive）。校验委托服务层。"""
     before = template_service.get_bank_template(db, template_id)
+    require_company_access(user, before.company_id)
     response = template_service.set_bank_template_status(db, template_id, status)
     record_audit_event(
         db,
         company_id=response.company_id,
-        actor_id=None,
+        actor_id=user.id,
         action=(
             "bank_template.disabled"
             if response.status == "inactive"
@@ -145,12 +195,22 @@ def update_bank_template_status(
         entity_id=response.id,
         before=before.model_dump(),
         after=response.model_dump(),
+        **audit_ctx(request),
     )
     return response
 
 
-@router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_bank_template(db: DbSession, template_id: str) -> None:
+@router.delete(
+    "/{template_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
+def delete_bank_template(
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    template_id: str,
+) -> None:
     """软删除银行模板（status→deleted）。
 
     引用拦截（保证历史批次可追溯，PRD §10.3.3）：
@@ -159,6 +219,7 @@ def delete_bank_template(db: DbSession, template_id: str) -> None:
     无引用时软删除（保留行与版本，仅置 deleted）。
     """
     parent = template_service.get_bank_template(db, template_id)
+    require_company_access(user, parent.company_id)
 
     version_ids = [
         v.id
@@ -195,9 +256,10 @@ def delete_bank_template(db: DbSession, template_id: str) -> None:
     record_audit_event(
         db,
         company_id=parent_entity.company_id,
-        actor_id=None,
+        actor_id=user.id,
         action="bank_template.deleted",
         entity_type="bank_template",
         entity_id=template_id,
         before=before.model_dump(),
+        **audit_ctx(request),
     )

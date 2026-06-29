@@ -40,5 +40,6 @@ def test_admin_sees_all_companies(client_with_db, make_user, auth_headers):
     r = c.get(
         "/api/tools/bank-journal/conversion-runs", headers=auth_headers(user)
     )
+    assert r.status_code == 200
     company_ids = {item["company_id"] for item in r.json()}
     assert company_ids == {"co-A", "co-B"}

@@ -56,6 +56,19 @@ def _seed_test_parents(session_local: sessionmaker) -> None:  # type: ignore[typ
                 status="active",
             )
         )
+        # 内置 admin 角色 + admin 用户，供集成测试统一鉴权（admin 为跨公司角色，
+        # 拥有全部权限，可命中任意端点的守卫与公司校验）。
+        admin_role = Role(id="role-admin", code="admin", name="管理员")
+        db.add(admin_role)
+        admin_user = User(
+            id="admin-1",
+            email="admin@example.com",
+            name="管理员",
+            password_hash="placeholder",
+            status="active",
+        )
+        admin_user.roles.append(admin_role)
+        db.add(admin_user)
         db.flush()
 
         # Layer 2
@@ -174,6 +187,22 @@ def _create_test_engine():
     return engine
 
 
+def _admin_auth_header() -> dict[str, str]:
+    """种子 admin 用户（admin-1）的鉴权头。
+
+    供 ``client`` 夹具默认携带（让不关心鉴权的流程测试统一以 admin 身份命中受保护
+    端点）以及 ``admin_auth`` 夹具复用。admin 为跨公司角色且拥有全部权限。
+    """
+    settings = get_settings()
+    token = create_access_token(
+        user_id="admin-1",
+        roles=["admin"],
+        ttl_minutes=settings.access_token_ttl_minutes,
+        secret=settings.secret_key,
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
 @pytest.fixture
 def client() -> Generator[TestClient, None, None]:
     engine = _create_test_engine()
@@ -190,7 +219,9 @@ def client() -> Generator[TestClient, None, None]:
 
     app.dependency_overrides[db_session.get_db] = override_get_db
     try:
-        with TestClient(app) as test_client:
+        # 默认以 admin 身份鉴权：本夹具用于不关心权限的流程测试，统一携带 admin 头
+        # 即可命中所有受保护端点；需要测特定角色/无 token 的用例改用 client_with_db。
+        with TestClient(app, headers=_admin_auth_header()) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
@@ -280,3 +311,12 @@ def auth_headers():
         return {"Authorization": f"Bearer {token}"}
 
     return _headers
+
+
+@pytest.fixture
+def admin_auth() -> dict[str, str]:
+    """种子 admin 用户（admin-1）的鉴权头，供 client_with_db 系列测试显式复用。
+
+    admin 为跨公司角色且拥有全部权限，可通过任意端点的权限守卫与公司校验。
+    """
+    return _admin_auth_header()

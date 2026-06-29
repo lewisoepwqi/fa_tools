@@ -1,14 +1,20 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi import status as http_status
 from pydantic import BaseModel
 from sqlalchemy import func
 
-from app.api.deps import DbSession
+from app.api.deps import (
+    CurrentUserDep,
+    DbSession,
+    require,
+    require_company_access,
+)
 from app.core.enums import RecordStatus
-from app.services.audit_service import record_audit_event
+from app.core.permissions import Permission
+from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.models.conversion import ConversionRunRuleVersion
 from app.tools.bank_journal.models.rule import Rule, RuleVersion
 from app.tools.bank_journal.schemas.rule import (
@@ -30,8 +36,19 @@ class RuleReorderRequest(BaseModel):
     items: list[RuleReorderItem]
 
 
-@router.post("", response_model=RuleResponse)
-def create_rule(db: DbSession, payload: RuleCreate) -> RuleResponse:
+@router.post(
+    "",
+    response_model=RuleResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
+def create_rule(
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    payload: RuleCreate,
+) -> RuleResponse:
+    require_company_access(user, payload.company_id)
+    payload.version.created_by = user.id
     rule_id = str(uuid.uuid4())
     parent = Rule(
         id=rule_id,
@@ -61,16 +78,21 @@ def create_rule(db: DbSession, payload: RuleCreate) -> RuleResponse:
     record_audit_event(
         db,
         company_id=response.company_id,
-        actor_id=response.latest_version.created_by,
+        actor_id=user.id,
         action="rule.created",
         entity_type="rule",
         entity_id=response.id,
         after=response.model_dump(),
+        **audit_ctx(request),
     )
     return response
 
 
-@router.get("", response_model=list[RuleResponse])
+@router.get(
+    "",
+    response_model=list[RuleResponse],
+    dependencies=[Depends(require(Permission.READ))],
+)
 def list_rules(
     db: DbSession,
     company_id: str | None = None,
@@ -118,7 +140,11 @@ def list_rules(
     return [_to_response(p, by_parent.get(p.id)) for p in parents]
 
 
-@router.get("/{rule_id}", response_model=RuleResponse)
+@router.get(
+    "/{rule_id}",
+    response_model=RuleResponse,
+    dependencies=[Depends(require(Permission.READ))],
+)
 def get_rule(db: DbSession, rule_id: str) -> RuleResponse:
     """规则详情（含最新版本）。不存在则 404。"""
     parent = _get_rule_or_404(db, rule_id)
@@ -126,12 +152,22 @@ def get_rule(db: DbSession, rule_id: str) -> RuleResponse:
     return _to_response(parent, latest)
 
 
-@router.post("/{rule_id}/versions", response_model=RuleResponse)
+@router.post(
+    "/{rule_id}/versions",
+    response_model=RuleResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def create_rule_version(
-    db: DbSession, rule_id: str, payload: RuleVersionCreate
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    rule_id: str,
+    payload: RuleVersionCreate,
 ) -> RuleResponse:
     """编辑规则=创建新版本（旧版本不可变）。"""
     parent = _get_rule_or_404(db, rule_id)
+    require_company_access(user, parent.company_id)
+    payload.created_by = user.id
     before_latest = _latest_rule_version(db, rule_id)
     new_version_no = (before_latest.version_no + 1) if before_latest else 1
     version = RuleVersion(
@@ -152,16 +188,21 @@ def create_rule_version(
     record_audit_event(
         db,
         company_id=response.company_id,
-        actor_id=response.latest_version.created_by,
+        actor_id=user.id,
         action="rule.modified",
         entity_type="rule",
         entity_id=response.id,
         after=response.model_dump(),
+        **audit_ctx(request),
     )
     return response
 
 
-@router.get("/{rule_id}/versions", response_model=list[RuleVersionResponse])
+@router.get(
+    "/{rule_id}/versions",
+    response_model=list[RuleVersionResponse],
+    dependencies=[Depends(require(Permission.READ))],
+)
 def list_rule_versions(db: DbSession, rule_id: str) -> list[RuleVersionResponse]:
     """规则版本历史。"""
     _get_rule_or_404(db, rule_id)
@@ -184,8 +225,18 @@ def list_rule_versions(db: DbSession, rule_id: str) -> list[RuleVersionResponse]
     ]
 
 
-@router.patch("/{rule_id}/status", response_model=RuleResponse)
-def update_rule_status(db: DbSession, rule_id: str, status: str) -> RuleResponse:
+@router.patch(
+    "/{rule_id}/status",
+    response_model=RuleResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
+def update_rule_status(
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    rule_id: str,
+    status: str,
+) -> RuleResponse:
     """停用/启用规则。"""
     if status not in {RecordStatus.ACTIVE.value, RecordStatus.INACTIVE.value}:
         raise HTTPException(
@@ -193,6 +244,7 @@ def update_rule_status(db: DbSession, rule_id: str, status: str) -> RuleResponse
             detail=f"Invalid status: {status}",
         )
     parent = _get_rule_or_404(db, rule_id)
+    require_company_access(user, parent.company_id)
     parent.status = status
     db.commit()
     db.refresh(parent)
@@ -201,7 +253,7 @@ def update_rule_status(db: DbSession, rule_id: str, status: str) -> RuleResponse
     record_audit_event(
         db,
         company_id=response.company_id,
-        actor_id=None,
+        actor_id=user.id,
         action=(
             "rule.disabled"
             if status == RecordStatus.INACTIVE.value
@@ -210,18 +262,29 @@ def update_rule_status(db: DbSession, rule_id: str, status: str) -> RuleResponse
         entity_type="rule",
         entity_id=response.id,
         after=response.model_dump(),
+        **audit_ctx(request),
     )
     return response
 
 
-@router.delete("/{rule_id}", status_code=http_status.HTTP_204_NO_CONTENT)
-def delete_rule(db: DbSession, rule_id: str) -> None:
+@router.delete(
+    "/{rule_id}",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
+def delete_rule(
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    rule_id: str,
+) -> None:
     """软删除规则（status→deleted）。
 
     引用拦截最严格：ConversionRunRuleVersion.rule_version_id 是 NOT NULL，
     一旦任一规则版本被批次引用即 409（保证历史批次可追溯）。
     """
     parent = _get_rule_or_404(db, rule_id)
+    require_company_access(user, parent.company_id)
 
     version_ids = [
         v.id
@@ -247,16 +310,26 @@ def delete_rule(db: DbSession, rule_id: str) -> None:
     record_audit_event(
         db,
         company_id=parent.company_id,
-        actor_id=None,
+        actor_id=user.id,
         action="rule.deleted",
         entity_type="rule",
         entity_id=rule_id,
         before=before.model_dump(),
+        **audit_ctx(request),
     )
 
 
-@router.post("/reorder", response_model=dict[str, Any])
-def reorder_rules(db: DbSession, payload: RuleReorderRequest) -> dict[str, Any]:
+@router.post(
+    "/reorder",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
+def reorder_rules(
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    payload: RuleReorderRequest,
+) -> dict[str, Any]:
     """批量调整规则优先级（PRD §6.6 / 技术设计 §11.5）。
 
     为每条规则创建一个新版本承载新 priority（保持版本化不可变语义）。
@@ -289,11 +362,12 @@ def reorder_rules(db: DbSession, payload: RuleReorderRequest) -> dict[str, Any]:
     record_audit_event(
         db,
         company_id=None,
-        actor_id=None,
+        actor_id=user.id,
         action="rule.priority_changed",
         entity_type="rule",
         entity_id=",".join(item.rule_id for item in payload.items),
         after={"updated": updated},
+        **audit_ctx(request),
     )
     return {"updated": updated}
 

@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import DbSession
+from app.api.deps import DbSession, require
+from app.core.permissions import Permission
 from app.models.audit import AuditLog
 from app.schemas.audit import AuditLogResponse
 from app.tools.bank_journal.schemas.pagination import Page
@@ -8,7 +9,11 @@ from app.tools.bank_journal.schemas.pagination import Page
 router = APIRouter(prefix="/api/audit-logs", tags=["audit"])
 
 
-@router.get("", response_model=Page[AuditLogResponse])
+@router.get(
+    "",
+    response_model=Page[AuditLogResponse],
+    dependencies=[Depends(require(Permission.AUDIT_VIEW))],
+)
 def list_audit_logs(
     db: DbSession,
     limit: int = Query(100, ge=1, le=500),

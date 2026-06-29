@@ -1,11 +1,17 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
-from app.api.deps import CurrentUserDep, DbSession, accessible_company_filter, require
+from app.api.deps import (
+    CurrentUserDep,
+    DbSession,
+    accessible_company_filter,
+    require,
+    require_company_access,
+)
 from app.core.config import get_settings
 from app.core.permissions import Permission
-from app.services.audit_service import record_audit_event
+from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.schemas.conversion import (
     ConversionRunCreate,
     ConversionRunFromConfigCreate,
@@ -30,27 +36,43 @@ router = APIRouter(
 )
 
 
-@router.post("", response_model=ConversionRunResponse)
+@router.post(
+    "",
+    response_model=ConversionRunResponse,
+    dependencies=[Depends(require(Permission.CONVERSION_PROCESS))],
+)
 def start_conversion_run(
-    db: DbSession, payload: ConversionRunCreate
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    payload: ConversionRunCreate,
 ) -> ConversionRunResponse:
+    require_company_access(user, payload.company_id)
     upload_dir = Path(get_settings().upload_dir)
     response = run_conversion(db, payload, upload_dir)
     record_audit_event(
         db,
         company_id=payload.company_id,
-        actor_id=None,
+        actor_id=user.id,
         action="conversion_run.created",
         entity_type="conversion_run",
         entity_id=response.id,
         after=response.model_dump(),
+        **audit_ctx(request),
     )
     return response
 
 
-@router.post("/from-config", response_model=ConversionRunResponse)
+@router.post(
+    "/from-config",
+    response_model=ConversionRunResponse,
+    dependencies=[Depends(require(Permission.CONVERSION_PROCESS))],
+)
 def start_conversion_from_config(
-    db: DbSession, payload: ConversionRunFromConfigCreate
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    payload: ConversionRunFromConfigCreate,
 ) -> ConversionRunResponse:
     """P0：用已配置的版本化模板/映射/规则驱动转换。
 
@@ -58,25 +80,32 @@ def start_conversion_from_config(
     只传配置 ID，服务端从 DB 查最新版本拼装内联参数后执行同一套 parse/preview 逻辑。
     让用户在四个配置模块里配的内容真正生效。
     """
+    require_company_access(user, payload.company_id)
     upload_dir = Path(get_settings().upload_dir)
     response = run_conversion_from_config(db, payload, upload_dir)
     record_audit_event(
         db,
         company_id=payload.company_id,
-        actor_id=None,
+        actor_id=user.id,
         action="conversion_run.created_from_config",
         entity_type="conversion_run",
         entity_id=response.id,
         after=response.model_dump(),
+        **audit_ctx(request),
     )
     return response
 
 
-@router.post("/dry-run", response_model=DryRunResponse)
+@router.post(
+    "/dry-run",
+    response_model=DryRunResponse,
+    dependencies=[Depends(require(Permission.CONVERSION_PROCESS))],
+)
 def dry_run(
-    db: DbSession, payload: DryRunCreate
+    db: DbSession, user: CurrentUserDep, payload: DryRunCreate
 ) -> DryRunResponse:
     """P3：试跑——用配置解析文件并计算预览，但不落库。供保存前即时验证。"""
+    require_company_access(user, payload.company_id)
     upload_dir = Path(get_settings().upload_dir)
     return dry_run_conversion(db, payload, upload_dir)
 
@@ -93,13 +122,21 @@ def list_runs(
     return list_conversion_runs(db, company_id, accessible_company_filter(user))
 
 
-@router.get("/{run_id}", response_model=ConversionRunResponse)
+@router.get(
+    "/{run_id}",
+    response_model=ConversionRunResponse,
+    dependencies=[Depends(require(Permission.READ))],
+)
 def get_run(db: DbSession, run_id: str) -> ConversionRunResponse:
     """批次详情（含预览行）。不存在则 404。"""
     return get_conversion_run(db, run_id)
 
 
-@router.get("/{run_id}/preview-rows", response_model=Page[JournalPreviewRowData])
+@router.get(
+    "/{run_id}/preview-rows",
+    response_model=Page[JournalPreviewRowData],
+    dependencies=[Depends(require(Permission.READ))],
+)
 def list_run_preview_rows(
     db: DbSession,
     run_id: str,

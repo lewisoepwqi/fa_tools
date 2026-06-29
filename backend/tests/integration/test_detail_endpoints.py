@@ -28,14 +28,16 @@ FIXTURE = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
 # ---------------------------------------------------------------------------
 
 
-def _create_run(client) -> dict:
+def _create_run(client, headers=None) -> dict:
     upload = client.post(
         "/api/files/upload",
         files={"file": ("bank_statement_basic.csv", FIXTURE.read_bytes(), "text/csv")},
         data={"company_id": "company-1", "uploaded_by": "user-1"},
+        headers=headers,
     ).json()
     return client.post(
         "/api/tools/bank-journal/conversion-runs",
+        headers=headers,
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -93,7 +95,7 @@ def test_list_conversion_runs_returns_items_without_preview_rows(
     c, db = client_with_db
     user = make_user(db, roles=["admin"])
     hdrs = auth_headers(user)
-    created = _create_run(c)
+    created = _create_run(c, headers=hdrs)
 
     response = c.get("/api/tools/bank-journal/conversion-runs", headers=hdrs)
 
@@ -115,7 +117,7 @@ def test_list_conversion_runs_filter_by_company(
     c, db = client_with_db
     user = make_user(db, roles=["admin"])
     hdrs = auth_headers(user)
-    _create_run(c)
+    _create_run(c, headers=hdrs)
 
     response = c.get(
         "/api/tools/bank-journal/conversion-runs",
@@ -340,9 +342,11 @@ def test_conversion_run_snapshots_version_ids(
         "/api/files/upload",
         files={"file": ("bank_statement_basic.csv", FIXTURE.read_bytes(), "text/csv")},
         data={"company_id": "company-1", "uploaded_by": "user-1"},
+        headers=hdrs,
     ).json()
     response = c.post(
         "/api/tools/bank-journal/conversion-runs",
+        headers=hdrs,
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -377,7 +381,9 @@ def test_conversion_run_snapshots_version_ids(
     assert created["mapping_profile_version_id"] == "mpv-1"
 
     # 详情端点也应返回版本快照
-    detail = c.get(f"/api/tools/bank-journal/conversion-runs/{created['id']}").json()
+    detail = c.get(
+        f"/api/tools/bank-journal/conversion-runs/{created['id']}", headers=hdrs
+    ).json()
     assert detail["bank_template_version_id"] == "btv-1"
 
     # 列表端点也应返回版本快照
