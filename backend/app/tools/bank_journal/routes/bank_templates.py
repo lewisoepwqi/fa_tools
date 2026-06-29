@@ -72,9 +72,11 @@ def create_bank_template(
     dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
 )
 def detect_bank_template(
-    db: DbSession, payload: BankTemplateDetectRequest
+    db: DbSession, user: CurrentUserDep, payload: BankTemplateDetectRequest
 ) -> BankTemplateDetectResponse:
     """从已上传的样本文件自动识别银行模板配置（PRD §5.1）。"""
+    # 按 company_id 检查访问权限（scoped 用户不可读他公司数据）
+    require_company_access(user, payload.company_id)
     source = db.query(SourceFile).filter(SourceFile.id == payload.source_file_id).first()
     if source is None:
         raise HTTPException(
@@ -121,9 +123,13 @@ def list_bank_templates(
     response_model=BankTemplateResponse,
     dependencies=[Depends(require(Permission.READ))],
 )
-def get_bank_template(db: DbSession, template_id: str) -> BankTemplateResponse:
-    """银行模板详情（含最新版本）。不存在则 404。"""
-    return template_service.get_bank_template(db, template_id)
+def get_bank_template(
+    db: DbSession, user: CurrentUserDep, template_id: str
+) -> BankTemplateResponse:
+    """银行模板详情（含最新版本）。不存在则 404，无权访问则 403。"""
+    response = template_service.get_bank_template(db, template_id)  # 不存在抛 404
+    require_company_access(user, response.company_id)  # 跨公司读取拦截
+    return response
 
 
 @router.post(
@@ -163,9 +169,11 @@ def create_bank_template_version(
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_bank_template_versions(
-    db: DbSession, template_id: str
+    db: DbSession, user: CurrentUserDep, template_id: str
 ) -> list[BankTemplateVersionResponse]:
-    """银行模板版本历史。"""
+    """银行模板版本历史。不存在则 404，无权访问则 403。"""
+    parent = template_service.get_bank_template(db, template_id)  # 不存在抛 404
+    require_company_access(user, parent.company_id)  # 跨公司读取拦截
     return template_service.list_bank_template_versions(db, template_id)
 
 

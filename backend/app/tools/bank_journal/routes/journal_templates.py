@@ -71,10 +71,12 @@ def list_journal_templates(
     dependencies=[Depends(require(Permission.READ))],
 )
 def get_journal_template(
-    db: DbSession, template_id: str
+    db: DbSession, user: CurrentUserDep, template_id: str
 ) -> CompanyJournalTemplateResponse:
-    """日记账模板详情（含最新版本）。不存在则 404。"""
-    return template_service.get_journal_template(db, template_id)
+    """日记账模板详情（含最新版本）。不存在则 404，无权访问则 403。"""
+    response = template_service.get_journal_template(db, template_id)  # 不存在抛 404
+    require_company_access(user, response.company_id)  # 跨公司读取拦截
+    return response
 
 
 @router.post(
@@ -114,9 +116,11 @@ def create_journal_template_version(
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_journal_template_versions(
-    db: DbSession, template_id: str
+    db: DbSession, user: CurrentUserDep, template_id: str
 ) -> list[CompanyJournalTemplateVersionResponse]:
-    """日记账模板版本历史。"""
+    """日记账模板版本历史。不存在则 404，无权访问则 403。"""
+    parent = template_service.get_journal_template(db, template_id)  # 不存在抛 404
+    require_company_access(user, parent.company_id)  # 跨公司读取拦截
     return template_service.list_journal_template_versions(db, template_id)
 
 

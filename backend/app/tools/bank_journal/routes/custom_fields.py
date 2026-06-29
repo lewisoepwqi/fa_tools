@@ -29,8 +29,11 @@ router = APIRouter(prefix="/api/tools/bank-journal/custom-fields", tags=["custom
     response_model=StandardSchemaResponse,
     dependencies=[Depends(require(Permission.READ))],
 )
-def get_standard_schema(db: DbSession, company_id: str) -> StandardSchemaResponse:
+def get_standard_schema(
+    db: DbSession, user: CurrentUserDep, company_id: str
+) -> StandardSchemaResponse:
     """返回内置标准字段（含公司覆盖）+ 公司扩展字段的合并视图，供前端字段下拉运行时拉取。"""
+    require_company_access(user, company_id)  # 跨公司读取拦截
     return custom_field_service.get_standard_schema(db, company_id)
 
 
@@ -102,8 +105,9 @@ def _require_field_company_access(db: DbSession, user: CurrentUserDep, field_id:
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_builtin_overrides(
-    db: DbSession, company_id: str
+    db: DbSession, user: CurrentUserDep, company_id: str
 ) -> list[BuiltinFieldOverrideResponse]:
+    require_company_access(user, company_id)  # 跨公司读取拦截
     return custom_field_service.list_builtin_overrides(db, company_id)
 
 

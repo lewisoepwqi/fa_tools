@@ -151,9 +151,10 @@ def list_rules(
     response_model=RuleResponse,
     dependencies=[Depends(require(Permission.READ))],
 )
-def get_rule(db: DbSession, rule_id: str) -> RuleResponse:
-    """规则详情（含最新版本）。不存在则 404。"""
+def get_rule(db: DbSession, user: CurrentUserDep, rule_id: str) -> RuleResponse:
+    """规则详情（含最新版本）。不存在则 404，无权访问则 403。"""
     parent = _get_rule_or_404(db, rule_id)
+    require_company_access(user, parent.company_id)  # 跨公司读取拦截
     latest = _latest_rule_version(db, rule_id)
     return _to_response(parent, latest)
 
@@ -209,9 +210,12 @@ def create_rule_version(
     response_model=list[RuleVersionResponse],
     dependencies=[Depends(require(Permission.READ))],
 )
-def list_rule_versions(db: DbSession, rule_id: str) -> list[RuleVersionResponse]:
-    """规则版本历史。"""
-    _get_rule_or_404(db, rule_id)
+def list_rule_versions(
+    db: DbSession, user: CurrentUserDep, rule_id: str
+) -> list[RuleVersionResponse]:
+    """规则版本历史。不存在则 404，无权访问则 403。"""
+    parent = _get_rule_or_404(db, rule_id)
+    require_company_access(user, parent.company_id)  # 跨公司读取拦截
     versions = (
         db.query(RuleVersion)
         .filter(RuleVersion.rule_id == rule_id)

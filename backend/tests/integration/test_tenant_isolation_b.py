@@ -6,6 +6,8 @@
 - 审计日志：NULL company_id 行为平台级，scoped 用户不可见。
 - 派生写校验：预览行 PATCH/confirm、导出 创建/下载、自定义字段 PATCH/DELETE
   对他公司资源返回 403。
+- W3 修复：detail/读端点跨公司隔离（GET by-id / versions-list / custom_fields
+  company_id 参数端点），scoped 用户读他公司资源应返回 403。
 """
 
 from uuid import uuid4
@@ -481,3 +483,224 @@ def test_journal_templates_admin_sees_all(client_with_db, make_user, auth_header
     assert r.status_code == 200
     companies = {item["company_id"] for item in r.json()}
     assert {"co-A", "co-B"} <= companies
+
+
+# ---------------------------------------------------------------------------
+# C. W3 修复：detail/读端点跨公司隔离（堵读取漏洞）
+# ---------------------------------------------------------------------------
+
+
+def test_get_run_detail_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户读他公司转换批次详情，应返回 403。"""
+    c, db = client_with_db
+    run_id = _seed_run(db, "co-B")
+    user = make_user(db, roles=["processor"], company_ids=["co-A"])
+    r = c.get(
+        f"/api/tools/bank-journal/conversion-runs/{run_id}",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_get_run_detail_missing_is_404(client_with_db, make_user, auth_headers):
+    """不存在的批次仍返回 404（存在性检查先于公司检查）。"""
+    c, db = client_with_db
+    user = make_user(db, roles=["processor"], company_ids=["co-A"])
+    r = c.get(
+        "/api/tools/bank-journal/conversion-runs/does-not-exist",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 404
+
+
+def test_get_run_detail_admin_sees_other_company(
+    client_with_db, make_user, auth_headers
+):
+    """admin（跨公司角色）读任意公司批次详情，应返回 200。"""
+    c, db = client_with_db
+    run_id = _seed_run(db, "co-B")
+    user = make_user(db, roles=["admin"])
+    r = c.get(
+        f"/api/tools/bank-journal/conversion-runs/{run_id}",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 200
+
+
+def test_list_run_preview_rows_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户读他公司批次的预览行列表，应返回 403。"""
+    c, db = client_with_db
+    run_id = _seed_run(db, "co-B")
+    user = make_user(db, roles=["processor"], company_ids=["co-A"])
+    r = c.get(
+        f"/api/tools/bank-journal/conversion-runs/{run_id}/preview-rows",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_list_run_preview_rows_missing_run_is_404(
+    client_with_db, make_user, auth_headers
+):
+    """预览行端点：不存在的批次返回 404。"""
+    c, db = client_with_db
+    user = make_user(db, roles=["processor"], company_ids=["co-A"])
+    r = c.get(
+        "/api/tools/bank-journal/conversion-runs/no-such-run/preview-rows",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 404
+
+
+def test_get_bank_template_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户读他公司银行模板详情，应返回 403。"""
+    c, db = client_with_db
+    tid = _seed_bank_template(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.get(
+        f"/api/tools/bank-journal/bank-templates/{tid}",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_get_bank_template_admin_allowed(client_with_db, make_user, auth_headers):
+    """admin 读他公司银行模板详情，应返回 200。"""
+    c, db = client_with_db
+    tid = _seed_bank_template(db, "co-B")
+    user = make_user(db, roles=["admin"])
+    r = c.get(
+        f"/api/tools/bank-journal/bank-templates/{tid}",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 200
+
+
+def test_list_bank_template_versions_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户读他公司银行模板版本历史，应返回 403。"""
+    c, db = client_with_db
+    tid = _seed_bank_template(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.get(
+        f"/api/tools/bank-journal/bank-templates/{tid}/versions",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_get_rule_other_company_forbidden(client_with_db, make_user, auth_headers):
+    """scoped 用户读他公司规则详情，应返回 403。"""
+    c, db = client_with_db
+    rid = _seed_rule(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.get(
+        f"/api/tools/bank-journal/rules/{rid}",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_list_rule_versions_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户读他公司规则版本历史，应返回 403。"""
+    c, db = client_with_db
+    rid = _seed_rule(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.get(
+        f"/api/tools/bank-journal/rules/{rid}/versions",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_get_standard_schema_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户用他公司 company_id 拉标准字段 schema，应返回 403。"""
+    c, db = client_with_db
+    _ensure_company(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.get(
+        "/api/tools/bank-journal/custom-fields/standard-schema?company_id=co-B",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_list_builtin_overrides_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户用他公司 company_id 拉 builtin-overrides，应返回 403。"""
+    c, db = client_with_db
+    _ensure_company(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.get(
+        "/api/tools/bank-journal/custom-fields/builtin-overrides?company_id=co-B",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_get_journal_template_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户读他公司日记账模板详情，应返回 403。"""
+    c, db = client_with_db
+    tid = _seed_journal_template(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.get(
+        f"/api/tools/bank-journal/journal-templates/{tid}",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_list_journal_template_versions_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户读他公司日记账模板版本历史，应返回 403。"""
+    c, db = client_with_db
+    tid = _seed_journal_template(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.get(
+        f"/api/tools/bank-journal/journal-templates/{tid}/versions",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_get_mapping_profile_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户读他公司映射方案详情，应返回 403。"""
+    c, db = client_with_db
+    pid = _seed_mapping_profile(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.get(
+        f"/api/tools/bank-journal/mapping-profiles/{pid}",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_list_mapping_profile_versions_other_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """scoped 用户读他公司映射方案版本历史，应返回 403。"""
+    c, db = client_with_db
+    pid = _seed_mapping_profile(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.get(
+        f"/api/tools/bank-journal/mapping-profiles/{pid}/versions",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403

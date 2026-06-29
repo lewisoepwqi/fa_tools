@@ -142,9 +142,12 @@ def list_mapping_profiles(
     response_model=MappingProfileResponse,
     dependencies=[Depends(require(Permission.READ))],
 )
-def get_mapping_profile(db: DbSession, profile_id: str) -> MappingProfileResponse:
-    """映射方案详情（含最新版本）。不存在则 404。"""
+def get_mapping_profile(
+    db: DbSession, user: CurrentUserDep, profile_id: str
+) -> MappingProfileResponse:
+    """映射方案详情（含最新版本）。不存在则 404，无权访问则 403。"""
     parent = _get_mapping_profile_or_404(db, profile_id)
+    require_company_access(user, parent.company_id)  # 跨公司读取拦截
     latest = _latest_mapping_version(db, profile_id)
     return _to_response(parent, latest)
 
@@ -200,10 +203,11 @@ def create_mapping_profile_version(
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_mapping_profile_versions(
-    db: DbSession, profile_id: str
+    db: DbSession, user: CurrentUserDep, profile_id: str
 ) -> list[MappingProfileVersionResponse]:
-    """映射方案版本历史。"""
-    _get_mapping_profile_or_404(db, profile_id)
+    """映射方案版本历史。不存在则 404，无权访问则 403。"""
+    parent = _get_mapping_profile_or_404(db, profile_id)
+    require_company_access(user, parent.company_id)  # 跨公司读取拦截
     versions = (
         db.query(MappingProfileVersion)
         .filter(MappingProfileVersion.mapping_profile_id == profile_id)
