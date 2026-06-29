@@ -1,8 +1,10 @@
 from sqlalchemy import String, Text, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.associations import user_companies, user_roles
 from app.models.common import IdMixin, TimestampMixin
+from app.models.company import Company
 
 
 class User(Base, IdMixin, TimestampMixin):
@@ -16,6 +18,12 @@ class User(Base, IdMixin, TimestampMixin):
         nullable=False,
         default="active",
         server_default=text("'active'"),
+    )
+
+    # 多对多关系：用户拥有的角色与所属公司
+    roles: Mapped[list["Role"]] = relationship("Role", secondary=user_roles, lazy="selectin")
+    companies: Mapped[list[Company]] = relationship(
+        "Company", secondary=user_companies, lazy="selectin"
     )
 
 

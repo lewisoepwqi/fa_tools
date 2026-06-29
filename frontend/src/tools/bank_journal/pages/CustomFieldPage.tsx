@@ -15,6 +15,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
+import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
 import {
   createCustomField,
@@ -29,8 +30,6 @@ import {
 import { getStandardSchema } from '../api/customFields';
 import { StatusTag } from '../components/StatusTag';
 
-const COMPANY_ID = 'company-1';
-const ACTOR = 'user-1';
 const DATA_TYPE_LABEL: Record<string, string> = { text: '文本', amount: '金额', date: '日期', enum: '枚举' };
 const DATA_TYPE_COLOR: Record<string, string> = {
   text: 'blue',
@@ -61,6 +60,10 @@ interface BuiltinFormState {
 }
 
 export function CustomFieldPage() {
+  const { currentCompanyId, hasPermission } = useAuth();
+  const canManage = hasPermission('template_manage');
+  const companyId = currentCompanyId ?? '';
+
   // 扩展字段
   const [extData, setExtData] = useState<CustomField[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,7 +82,7 @@ export function CustomFieldPage() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([listCustomFields(COMPANY_ID), getStandardSchema(COMPANY_ID)])
+    Promise.all([listCustomFields(companyId), getStandardSchema(companyId)])
       .then(([ext, schema]) => {
         setExtData(ext);
         setStandardFields(schema.fields);
@@ -91,7 +94,8 @@ export function CustomFieldPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, [companyId]);
 
   // ============ 内置字段覆盖 ============
   const openBuiltinEdit = (f: StandardFieldDef) => {
@@ -119,7 +123,7 @@ export function CustomFieldPage() {
     setBuiltinSaving(true);
     try {
       await upsertBuiltinOverride({
-        company_id: COMPANY_ID,
+        company_id: companyId,
         field_key: builtinForm.field_key,
         label_override: builtinForm.label.trim() || null,
         header_keywords_override: builtinForm.header_keywords.length
@@ -139,7 +143,7 @@ export function CustomFieldPage() {
 
   const handleRestoreBuiltin = async (fieldKey: string) => {
     try {
-      await deleteBuiltinOverride(fieldKey, COMPANY_ID);
+      await deleteBuiltinOverride(fieldKey, companyId);
       message.success('已恢复默认');
       load();
     } catch (err) {
@@ -199,12 +203,11 @@ export function CustomFieldPage() {
         message.success('已保存');
       } else {
         await createCustomField({
-          company_id: COMPANY_ID,
+          company_id: companyId,
           field_key: extForm.field_key.trim(),
           name: extForm.name.trim(),
           data_type: extForm.data_type,
-          header_keywords: extForm.header_keywords,
-          created_by: ACTOR
+          header_keywords: extForm.header_keywords
         });
         message.success('已创建');
       }
@@ -422,9 +425,17 @@ export function CustomFieldPage() {
               槽位配额：文本 {usedByType('text')}/{QUOTA.text}、金额 {usedByType('amount')}/
               {QUOTA.amount}、日期 {usedByType('date')}/{QUOTA.date}
             </Typography.Text>
-            <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openExtCreate}>
-              新建扩展字段
-            </Button>
+            <Tooltip title={!canManage ? '权限不足' : !currentCompanyId ? '请先在右上角选择公司' : undefined}>
+              <Button
+                type="primary"
+                size="small"
+                icon={<PlusOutlined />}
+                disabled={!canManage || !currentCompanyId}
+                onClick={openExtCreate}
+              >
+                新建扩展字段
+              </Button>
+            </Tooltip>
           </Space>
         }
       >

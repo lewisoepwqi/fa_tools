@@ -28,14 +28,16 @@ FIXTURE = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
 # ---------------------------------------------------------------------------
 
 
-def _create_run(client) -> dict:
+def _create_run(client, headers=None) -> dict:
     upload = client.post(
         "/api/files/upload",
         files={"file": ("bank_statement_basic.csv", FIXTURE.read_bytes(), "text/csv")},
         data={"company_id": "company-1", "uploaded_by": "user-1"},
+        headers=headers,
     ).json()
     return client.post(
         "/api/tools/bank-journal/conversion-runs",
+        headers=headers,
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -87,10 +89,15 @@ def _create_run(client) -> dict:
     ).json()
 
 
-def test_list_conversion_runs_returns_items_without_preview_rows(client, upload_dir) -> None:
-    created = _create_run(client)
+def test_list_conversion_runs_returns_items_without_preview_rows(
+    client_with_db, upload_dir, make_user, auth_headers
+) -> None:
+    c, db = client_with_db
+    user = make_user(db, roles=["admin"])
+    hdrs = auth_headers(user)
+    created = _create_run(c, headers=hdrs)
 
-    response = client.get("/api/tools/bank-journal/conversion-runs")
+    response = c.get("/api/tools/bank-journal/conversion-runs", headers=hdrs)
 
     assert response.status_code == 200
     items = response.json()
@@ -104,14 +111,23 @@ def test_list_conversion_runs_returns_items_without_preview_rows(client, upload_
     assert matched["created_at"] is not None
 
 
-def test_list_conversion_runs_filter_by_company(client, upload_dir) -> None:
-    _create_run(client)
+def test_list_conversion_runs_filter_by_company(
+    client_with_db, upload_dir, make_user, auth_headers
+) -> None:
+    c, db = client_with_db
+    user = make_user(db, roles=["admin"])
+    hdrs = auth_headers(user)
+    _create_run(c, headers=hdrs)
 
-    response = client.get(
-        "/api/tools/bank-journal/conversion-runs", params={"company_id": "company-1"}
+    response = c.get(
+        "/api/tools/bank-journal/conversion-runs",
+        params={"company_id": "company-1"},
+        headers=hdrs,
     )
-    response_other = client.get(
-        "/api/tools/bank-journal/conversion-runs", params={"company_id": "no-such-company"}
+    response_other = c.get(
+        "/api/tools/bank-journal/conversion-runs",
+        params={"company_id": "no-such-company"},
+        headers=hdrs,
     )
 
     assert response.status_code == 200
@@ -315,15 +331,22 @@ def test_get_rule_detail_404_when_missing(client) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_conversion_run_snapshots_version_ids(client, upload_dir) -> None:
+def test_conversion_run_snapshots_version_ids(
+    client_with_db, upload_dir, make_user, auth_headers
+) -> None:
     """转换批次可携带使用的模板/映射版本 ID，用于后续追溯（PRD §10.3.3）。"""
-    upload = client.post(
+    c, db = client_with_db
+    user = make_user(db, roles=["admin"])
+    hdrs = auth_headers(user)
+    upload = c.post(
         "/api/files/upload",
         files={"file": ("bank_statement_basic.csv", FIXTURE.read_bytes(), "text/csv")},
         data={"company_id": "company-1", "uploaded_by": "user-1"},
+        headers=hdrs,
     ).json()
-    response = client.post(
+    response = c.post(
         "/api/tools/bank-journal/conversion-runs",
+        headers=hdrs,
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -358,10 +381,12 @@ def test_conversion_run_snapshots_version_ids(client, upload_dir) -> None:
     assert created["mapping_profile_version_id"] == "mpv-1"
 
     # 详情端点也应返回版本快照
-    detail = client.get(f"/api/tools/bank-journal/conversion-runs/{created['id']}").json()
+    detail = c.get(
+        f"/api/tools/bank-journal/conversion-runs/{created['id']}", headers=hdrs
+    ).json()
     assert detail["bank_template_version_id"] == "btv-1"
 
     # 列表端点也应返回版本快照
-    items = client.get("/api/tools/bank-journal/conversion-runs").json()
+    items = c.get("/api/tools/bank-journal/conversion-runs", headers=hdrs).json()
     matched = next(item for item in items if item["id"] == created["id"])
     assert matched["mapping_profile_version_id"] == "mpv-1"

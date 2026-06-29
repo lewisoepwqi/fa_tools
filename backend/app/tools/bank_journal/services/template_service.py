@@ -54,6 +54,7 @@ def create_bank_template(db: Session, payload: BankTemplateCreate) -> BankTempla
         created_by=payload.version.created_by,
     )
     db.add(parent)
+    db.flush()  # bank_templates 先落库，version 的外键引用方有效
     db.add(version)
     db.commit()
     db.refresh(parent)
@@ -61,10 +62,18 @@ def create_bank_template(db: Session, payload: BankTemplateCreate) -> BankTempla
     return _bank_template_to_response(parent, version)
 
 
-def list_bank_templates(db: Session, company_id: str | None = None) -> list[BankTemplateResponse]:
+def list_bank_templates(
+    db: Session,
+    company_id: str | None = None,
+    accessible: set[str] | None = None,
+) -> list[BankTemplateResponse]:
     query = db.query(BankTemplate)
     if company_id is not None:
         query = query.filter(BankTemplate.company_id == company_id)
+    # 租户收窄：accessible 非 None 时仅返回可访问公司的行（空集 → 空结果；
+    # None → 不过滤，即跨公司角色）
+    if accessible is not None:
+        query = query.filter(BankTemplate.company_id.in_(accessible))
     # 软删除项不在列表/下拉中展示（删除仅置 status=deleted，行与版本保留）
     query = query.filter(BankTemplate.status != RecordStatus.DELETED.value)
     parents = query.all()
@@ -220,6 +229,7 @@ def create_journal_template(
         created_by=payload.version.created_by,
     )
     db.add(parent)
+    db.flush()  # company_journal_templates 先落库，version 的外键引用方有效
     db.add(version)
     db.commit()
     db.refresh(parent)
@@ -228,11 +238,16 @@ def create_journal_template(
 
 
 def list_journal_templates(
-    db: Session, company_id: str | None = None
+    db: Session,
+    company_id: str | None = None,
+    accessible: set[str] | None = None,
 ) -> list[CompanyJournalTemplateResponse]:
     query = db.query(CompanyJournalTemplate)
     if company_id is not None:
         query = query.filter(CompanyJournalTemplate.company_id == company_id)
+    # 租户收窄：accessible 非 None 时仅返回可访问公司的行
+    if accessible is not None:
+        query = query.filter(CompanyJournalTemplate.company_id.in_(accessible))
     # 软删除项不在列表/下拉中展示
     query = query.filter(CompanyJournalTemplate.status != RecordStatus.DELETED.value)
     parents = query.all()

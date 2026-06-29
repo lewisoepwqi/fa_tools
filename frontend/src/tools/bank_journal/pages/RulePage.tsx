@@ -1,8 +1,9 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Input, InputNumber, Modal, Popconfirm, Space, Switch, Table, Tag, Typography } from 'antd';
+import { Button, Input, InputNumber, Modal, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
 import { createRule, deleteRule, listRules, setRuleStatus } from '../api/rules';
 import {
@@ -13,11 +14,11 @@ import {
 import { VersionBadge } from '../components/VersionBadge';
 import type { Rule } from '../types/rules';
 
-const ACTOR = 'user-1';
-
 const EMPTY_RULE: RuleEditorData = { logic: 'all', conditions: [], actions: [] };
 
 export function RulePage() {
+  const { currentCompanyId, hasPermission } = useAuth();
+  const canManage = hasPermission('template_manage');
   const [rows, setRows] = useState<Rule[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -71,18 +72,22 @@ export function RulePage() {
       message.error('请至少添加一个条件');
       return;
     }
+    // 防止模态框打开后公司切换为空时发送空字符串
+    if (!currentCompanyId) {
+      message.error('请先在右上角选择公司');
+      return;
+    }
     setCreating(true);
     try {
       const { conditions_json, actions_json } = ruleDataToBackend(ruleData);
       await createRule({
-        company_id: 'company-1',
+        company_id: currentCompanyId,
         name,
         version: {
           priority,
           conditions_json,
           actions_json,
-          allow_auto_confirm: allowAutoConfirm,
-          created_by: ACTOR
+          allow_auto_confirm: allowAutoConfirm
         }
       });
       message.success('规则已创建');
@@ -197,9 +202,21 @@ export function RulePage() {
       <div className="toolbar" style={{ marginBottom: 16 }}>
         <h2 className="section-title">规则</h2>
         <div className="toolbar-spacer" />
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建
-        </Button>
+        {!currentCompanyId && (
+          <Typography.Text type="secondary" style={{ marginRight: 8, fontSize: 12 }}>
+            请先在右上角选择公司
+          </Typography.Text>
+        )}
+        <Tooltip title={!canManage ? '权限不足' : undefined}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={!canManage || !currentCompanyId}
+            onClick={openCreate}
+          >
+            新建
+          </Button>
+        </Tooltip>
       </div>
       <Table<Rule>
         rowKey="id"

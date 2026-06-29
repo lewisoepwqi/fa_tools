@@ -2,12 +2,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
-from app.api.deps import DbSession
+from app.api.deps import (
+    CurrentUserDep,
+    DbSession,
+    require,
+    require_company_access,
+)
 from app.core.config import get_settings
-from app.services.audit_service import record_audit_event
+from app.core.permissions import Permission
+from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.enums import PreviewStatus
 from app.tools.bank_journal.models.conversion import (
     ConversionRun,
@@ -27,14 +33,26 @@ from app.tools.bank_journal.services.export_service import (
 router = APIRouter(tags=["exports"])
 
 
-@router.post("/api/tools/bank-journal/conversion-runs/{run_id}/exports")
-def create_export(run_id: str, payload: ExportCreate, db: DbSession) -> dict:
+@router.post(
+    "/api/tools/bank-journal/conversion-runs/{run_id}/exports",
+    dependencies=[Depends(require(Permission.EXPORT_RUN))],
+)
+def create_export(
+    run_id: str,
+    payload: ExportCreate,
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+) -> dict:
+    payload.exported_by = user.id
     run = db.query(ConversionRun).filter(ConversionRun.id == run_id).first()
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversion run not found: {run_id}",
         )
+    # 派生公司写校验：导出依附于批次，按批次公司校验
+    require_company_access(user, run.company_id)
 
     output_dir = Path(get_settings().export_dir)
     export_id = str(uuid4())
@@ -90,11 +108,12 @@ def create_export(run_id: str, payload: ExportCreate, db: DbSession) -> dict:
     record_audit_event(
         db,
         company_id=None,
-        actor_id=payload.exported_by,
+        actor_id=user.id,
         action="export.created",
         entity_type="export",
         entity_id=export_id,
         after=response,
+        **audit_ctx(request),
     )
     return response
 
@@ -185,11 +204,17 @@ def _build_export_report(
     }
 
 
-@router.get("/api/tools/bank-journal/exports/{export_id}/download")
-def download_export(export_id: str, db: DbSession) -> FileResponse:
+@router.get(
+    "/api/tools/bank-journal/exports/{export_id}/download",
+    dependencies=[Depends(require(Permission.EXPORT_RUN))],
+)
+def download_export(
+    export_id: str, db: DbSession, user: CurrentUserDep
+) -> FileResponse:
     export = db.query(Export).filter(Export.id == export_id).first()
     if export is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found")
+    _require_export_company_access(db, user, export)
     path = Path(get_settings().export_dir) / export.storage_key
     if not path.exists():
         raise HTTPException(
@@ -202,12 +227,18 @@ def download_export(export_id: str, db: DbSession) -> FileResponse:
     )
 
 
-@router.get("/api/tools/bank-journal/exports/{export_id}/report")
-def download_export_report(export_id: str, db: DbSession) -> FileResponse:
+@router.get(
+    "/api/tools/bank-journal/exports/{export_id}/report",
+    dependencies=[Depends(require(Permission.EXPORT_RUN))],
+)
+def download_export_report(
+    export_id: str, db: DbSession, user: CurrentUserDep
+) -> FileResponse:
     """下载处理报告（PRD §6.9.7）。"""
     export = db.query(Export).filter(Export.id == export_id).first()
     if export is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found")
+    _require_export_company_access(db, user, export)
     if not export.report_storage_key:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Report not available"
@@ -222,3 +253,24 @@ def download_export_report(export_id: str, db: DbSession) -> FileResponse:
         filename=export.report_storage_key,
         media_type="application/json",
     )
+
+
+def _require_export_company_access(db: DbSession, user: CurrentUserDep, export: Export) -> None:
+    """加载导出所属批次 → 按批次公司做访问校验。
+
+    区分两种 None：
+    - export 本身不存在 → 由调用方在调用此函数前已检查并抛 404，此处不再处理。
+    - export 存在但 run 已消失（孤儿）→ 无法确认归属，fail-closed：抛 403 而非放行。
+    """
+    run = (
+        db.query(ConversionRun)
+        .filter(ConversionRun.id == export.conversion_run_id)
+        .first()
+    )
+    if run is None:
+        # 孤儿导出：父批次已丢失，无法校验归属，拒绝访问
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无法确认导出所属公司，拒绝访问",
+        )
+    require_company_access(user, run.company_id)

@@ -5,6 +5,7 @@ import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import App from './App';
 import { AntdAppProvider } from './components/antdApp';
+import { AuthProvider } from './auth/AuthProvider';
 import { themeConfig } from './theme';
 import './styles.css';
 
@@ -19,7 +20,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           // 本应用路由均为绝对路径（/bank-journal/...），不受 relativeSplatPath 行为影响。
           future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
         >
-          <App />
+          {/* AuthProvider 须在 BrowserRouter 内（RequireAuth 用 Navigate，依赖路由上下文）*/}
+          <AuthProvider>
+            <App />
+          </AuthProvider>
         </BrowserRouter>
       </AntdAppProvider>
     </ConfigProvider>

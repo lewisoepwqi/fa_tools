@@ -17,14 +17,12 @@ export async function adjustPreviewRow(
   rowId: string,
   fieldName: string,
   newValue: string,
-  reason: string | null,
-  adjustedBy: string
+  reason: string | null
 ): Promise<AdjustResult> {
   const response = await apiClient.patch<AdjustResult>(`/api/tools/bank-journal/preview-rows/${rowId}`, {
     field_name: fieldName,
     new_value: newValue,
-    reason,
-    adjusted_by: adjustedBy
+    reason
   });
   return response.data;
 }
@@ -32,11 +30,9 @@ export async function adjustPreviewRow(
 /** 确认单行（POST /api/tools/bank-journal/preview-rows/{id}/confirm）。 */
 export async function confirmPreviewRow(
   rowId: string,
-  confirmedBy: string,
   comment: string | null = null
 ): Promise<ConfirmResult> {
   const response = await apiClient.post<ConfirmResult>(`/api/tools/bank-journal/preview-rows/${rowId}/confirm`, {
-    confirmed_by: confirmedBy,
     comment
   });
   return response.data;

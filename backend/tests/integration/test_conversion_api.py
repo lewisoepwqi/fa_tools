@@ -267,8 +267,9 @@ def test_list_bank_templates_returns_persisted_template(client) -> None:
         },
     ).json()
     listed = client.get("/api/tools/bank-journal/bank-templates").json()
-    assert any(t["id"] == create["id"] for t in listed)
-    assert listed[0]["latest_version"]["version_no"] == 1
+    created_in_list = next(t for t in listed if t["id"] == create["id"])
+    # 新建模板只有 1 个版本；version_no 应为 1
+    assert created_in_list["latest_version"]["version_no"] == 1
 
 
 def test_creating_a_bank_template_records_an_audit_event(client) -> None:
@@ -510,7 +511,9 @@ def test_duplicate_row_in_batch_flagged_as_duplicate_in_batch(client, upload_dir
     assert "DUPLICATE_IN_BATCH" in rows[1]["exception_codes"]
 
 
-def test_no_orphan_bank_transaction_when_all_rows_fail_preview(client_with_db, tmp_path) -> None:
+def test_no_orphan_bank_transaction_when_all_rows_fail_preview(
+    client_with_db, tmp_path, admin_auth
+) -> None:
     """回归测试：build_preview_row 失败时不应留下孤儿 BankTransaction。
 
     Bad mapping (source field does not exist) causes build_preview_row to throw
@@ -536,10 +539,12 @@ def test_no_orphan_bank_transaction_when_all_rows_fail_preview(client_with_db, t
         "/api/files/upload",
         files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
         data={"company_id": "company-1", "uploaded_by": "user-1"},
+        headers=admin_auth,
     ).json()
 
     response = client.post(
         "/api/tools/bank-journal/conversion-runs",
+        headers=admin_auth,
         json={
             "company_id": "company-1",
             "bank_account_id": "bank-account-1",
@@ -775,7 +780,7 @@ def test_preview_rows_limit_capped_at_500(client) -> None:
 
 
 def test_conversion_missing_disk_file_returns_404(
-    client_with_db, tmp_path, seeded_run_payload
+    client_with_db, tmp_path, seeded_run_payload, admin_auth
 ) -> None:
     """DB has SourceFile row but physical file is missing on disk → 404, not 500.
 
@@ -814,7 +819,9 @@ def test_conversion_missing_disk_file_returns_404(
 
     payload = dict(seeded_run_payload)
     payload["source_file_ids"] = [sf_id]
-    resp = test_client.post("/api/tools/bank-journal/conversion-runs", json=payload)
+    resp = test_client.post(
+        "/api/tools/bank-journal/conversion-runs", json=payload, headers=admin_auth
+    )
     assert resp.status_code == 404
 
     get_settings.cache_clear()

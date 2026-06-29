@@ -1,12 +1,19 @@
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi import status as http_status
 from sqlalchemy import func
 
-from app.api.deps import DbSession
+from app.api.deps import (
+    CurrentUserDep,
+    DbSession,
+    accessible_company_filter,
+    require,
+    require_company_access,
+)
 from app.core.enums import RecordStatus
-from app.services.audit_service import record_audit_event
+from app.core.permissions import Permission
+from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.models.conversion import ConversionRun
 from app.tools.bank_journal.models.mapping import MappingProfile, MappingProfileVersion
 from app.tools.bank_journal.schemas.mapping import (
@@ -21,10 +28,19 @@ router = APIRouter(
 )
 
 
-@router.post("", response_model=MappingProfileResponse)
+@router.post(
+    "",
+    response_model=MappingProfileResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def create_mapping_profile(
-    db: DbSession, payload: MappingProfileCreate
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    payload: MappingProfileCreate,
 ) -> MappingProfileResponse:
+    require_company_access(user, payload.company_id)
+    payload.version.created_by = user.id
     profile_id = str(uuid.uuid4())
     parent = MappingProfile(
         id=profile_id,
@@ -44,6 +60,7 @@ def create_mapping_profile(
         created_by=payload.version.created_by,
     )
     db.add(parent)
+    db.flush()  # mapping_profiles 先落库，version 的外键引用方有效
     db.add(version)
     db.commit()
     db.refresh(parent)
@@ -52,18 +69,24 @@ def create_mapping_profile(
     record_audit_event(
         db,
         company_id=response.company_id,
-        actor_id=response.latest_version.created_by,
+        actor_id=user.id,
         action="mapping_profile.created",
         entity_type="mapping_profile",
         entity_id=response.id,
         after=response.model_dump(),
+        **audit_ctx(request),
     )
     return response
 
 
-@router.get("", response_model=list[MappingProfileResponse])
+@router.get(
+    "",
+    response_model=list[MappingProfileResponse],
+    dependencies=[Depends(require(Permission.READ))],
+)
 def list_mapping_profiles(
     db: DbSession,
+    user: CurrentUserDep,
     company_id: str | None = None,
     bank_template_id: str | None = None,
     company_journal_template_id: str | None = None,
@@ -76,6 +99,10 @@ def list_mapping_profiles(
     query = db.query(MappingProfile)
     if company_id is not None:
         query = query.filter(MappingProfile.company_id == company_id)
+    # 租户收窄：accessible 非 None 时仅返回可访问公司的行
+    accessible = accessible_company_filter(user)
+    if accessible is not None:
+        query = query.filter(MappingProfile.company_id.in_(accessible))
     if bank_template_id is not None:
         query = query.filter(MappingProfile.bank_template_id == bank_template_id)
     if company_journal_template_id is not None:
@@ -110,20 +137,37 @@ def list_mapping_profiles(
     return [_to_response(p, by_parent.get(p.id)) for p in parents]
 
 
-@router.get("/{profile_id}", response_model=MappingProfileResponse)
-def get_mapping_profile(db: DbSession, profile_id: str) -> MappingProfileResponse:
-    """映射方案详情（含最新版本）。不存在则 404。"""
+@router.get(
+    "/{profile_id}",
+    response_model=MappingProfileResponse,
+    dependencies=[Depends(require(Permission.READ))],
+)
+def get_mapping_profile(
+    db: DbSession, user: CurrentUserDep, profile_id: str
+) -> MappingProfileResponse:
+    """映射方案详情（含最新版本）。不存在则 404，无权访问则 403。"""
     parent = _get_mapping_profile_or_404(db, profile_id)
+    require_company_access(user, parent.company_id)  # 跨公司读取拦截
     latest = _latest_mapping_version(db, profile_id)
     return _to_response(parent, latest)
 
 
-@router.post("/{profile_id}/versions", response_model=MappingProfileResponse)
+@router.post(
+    "/{profile_id}/versions",
+    response_model=MappingProfileResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def create_mapping_profile_version(
-    db: DbSession, profile_id: str, payload: MappingProfileVersionCreate
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    profile_id: str,
+    payload: MappingProfileVersionCreate,
 ) -> MappingProfileResponse:
     """编辑映射方案=创建新版本（旧版本不可变）。"""
     parent = _get_mapping_profile_or_404(db, profile_id)
+    require_company_access(user, parent.company_id)
+    payload.created_by = user.id
     before_latest = _latest_mapping_version(db, profile_id)
     new_version_no = (before_latest.version_no + 1) if before_latest else 1
     version = MappingProfileVersion(
@@ -143,23 +187,27 @@ def create_mapping_profile_version(
     record_audit_event(
         db,
         company_id=response.company_id,
-        actor_id=response.latest_version.created_by,
+        actor_id=user.id,
         action="mapping_profile.modified",
         entity_type="mapping_profile",
         entity_id=response.id,
         after=response.model_dump(),
+        **audit_ctx(request),
     )
     return response
 
 
 @router.get(
-    "/{profile_id}/versions", response_model=list[MappingProfileVersionResponse]
+    "/{profile_id}/versions",
+    response_model=list[MappingProfileVersionResponse],
+    dependencies=[Depends(require(Permission.READ))],
 )
 def list_mapping_profile_versions(
-    db: DbSession, profile_id: str
+    db: DbSession, user: CurrentUserDep, profile_id: str
 ) -> list[MappingProfileVersionResponse]:
-    """映射方案版本历史。"""
-    _get_mapping_profile_or_404(db, profile_id)
+    """映射方案版本历史。不存在则 404，无权访问则 403。"""
+    parent = _get_mapping_profile_or_404(db, profile_id)
+    require_company_access(user, parent.company_id)  # 跨公司读取拦截
     versions = (
         db.query(MappingProfileVersion)
         .filter(MappingProfileVersion.mapping_profile_id == profile_id)
@@ -169,9 +217,17 @@ def list_mapping_profile_versions(
     return [_version_to_response(version) for version in versions]
 
 
-@router.patch("/{profile_id}/status", response_model=MappingProfileResponse)
+@router.patch(
+    "/{profile_id}/status",
+    response_model=MappingProfileResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
 def update_mapping_profile_status(
-    db: DbSession, profile_id: str, status: str
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    profile_id: str,
+    status: str,
 ) -> MappingProfileResponse:
     """停用/启用映射方案。校验直接在路由层做（无 service 包装）。"""
     if status not in {RecordStatus.ACTIVE.value, RecordStatus.INACTIVE.value}:
@@ -180,6 +236,7 @@ def update_mapping_profile_status(
             detail=f"Invalid status: {status}",
         )
     parent = _get_mapping_profile_or_404(db, profile_id)
+    require_company_access(user, parent.company_id)
     parent.status = status
     db.commit()
     db.refresh(parent)
@@ -188,7 +245,7 @@ def update_mapping_profile_status(
     record_audit_event(
         db,
         company_id=response.company_id,
-        actor_id=None,
+        actor_id=user.id,
         action=(
             "mapping_profile.disabled"
             if response.status == "inactive"
@@ -197,14 +254,25 @@ def update_mapping_profile_status(
         entity_type="mapping_profile",
         entity_id=response.id,
         after=response.model_dump(),
+        **audit_ctx(request),
     )
     return response
 
 
-@router.delete("/{profile_id}", status_code=http_status.HTTP_204_NO_CONTENT)
-def delete_mapping_profile(db: DbSession, profile_id: str) -> None:
+@router.delete(
+    "/{profile_id}",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
+def delete_mapping_profile(
+    db: DbSession,
+    user: CurrentUserDep,
+    request: Request,
+    profile_id: str,
+) -> None:
     """软删除映射方案（status→deleted）。引用拦截：被 ConversionRun 引用则 409。"""
     parent = _get_mapping_profile_or_404(db, profile_id)
+    require_company_access(user, parent.company_id)
 
     version_ids = [
         v.id
@@ -232,11 +300,12 @@ def delete_mapping_profile(db: DbSession, profile_id: str) -> None:
     record_audit_event(
         db,
         company_id=parent.company_id,
-        actor_id=None,
+        actor_id=user.id,
         action="mapping_profile.deleted",
         entity_type="mapping_profile",
         entity_id=profile_id,
         before=before.model_dump(),
+        **audit_ctx(request),
     )
 
 

@@ -17,6 +17,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.crypto import EncryptedString
 from app.db.base import Base
 from app.models.common import IdMixin, TimestampMixin
 
@@ -108,7 +109,7 @@ class BankTransaction(Base, IdMixin):
     net_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     balance: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     counterparty_name: Mapped[str | None] = mapped_column(String(255))
-    counterparty_account_no_encrypted: Mapped[str | None] = mapped_column(String(512))
+    counterparty_account_no_encrypted: Mapped[str | None] = mapped_column(EncryptedString(512))
     counterparty_bank_name: Mapped[str | None] = mapped_column(String(255))
     summary: Mapped[str | None] = mapped_column(String(255))
     purpose: Mapped[str | None] = mapped_column(String(255))

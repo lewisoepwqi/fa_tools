@@ -13,7 +13,6 @@ export interface ExportResponse {
 export interface CreateExportParams {
   file_type: 'csv' | 'xlsx';
   columns: string[];
-  exported_by?: string | null;
   only_confirmed?: boolean;
   required_columns?: string[] | null;
   rows?: Record<string, unknown>[] | null;
