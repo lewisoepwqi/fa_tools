@@ -6,11 +6,13 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
+from app.tools.bank_journal.domain.amounts import SignedAmount
 from app.tools.bank_journal.enums import AmountMode, ExceptionCode, TransactionDirection
 from app.tools.bank_journal.schemas.standard import StandardBankTransaction
 from app.tools.bank_journal.services.parser_service import (
     BankTemplateParseConfig,
     _decimal_or_none,
+    _parse_amounts,
     _read_rows,
     detect_bank_template_config,
     detect_header_row,
@@ -472,3 +474,30 @@ def test_decimal_cleaning_variants():
     assert _decimal_or_none("500 DR") == Decimal("-500")
     assert _decimal_or_none("500 CR") == Decimal("500")
     assert _decimal_or_none("１２３") == Decimal("123")  # 全角数字
+
+
+# ---------------------------------------------------------------------------
+# Task 9: _parse_amounts 返回 SignedAmount + 负数翻向告警
+# ---------------------------------------------------------------------------
+
+
+def test_parse_amounts_returns_signed_amount():
+    sa = _parse_amounts(
+        {"income": "100", "expense": ""},
+        AmountMode.INCOME_EXPENSE_COLUMNS,
+        {"income": "income", "expense": "expense"},
+    )
+    assert isinstance(sa, SignedAmount)
+    assert sa.direction == TransactionDirection.CREDIT
+    assert sa.net_amount == Decimal("100")
+
+
+def test_parse_amounts_negative_income_flags_anomaly():
+    sa = _parse_amounts(
+        {"income": "-50", "expense": ""},
+        AmountMode.INCOME_EXPENSE_COLUMNS,
+        {"income": "income", "expense": "expense"},
+    )
+    assert sa.direction == TransactionDirection.DEBIT
+    assert sa.net_amount == Decimal("-50")
+    assert sa.sign_anomaly is True

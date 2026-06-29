@@ -212,6 +212,9 @@ def run_conversion(
                 payload.required_columns,
                 row_index,
             )
+            for code in parsed.warnings:
+                if code not in preview.exception_codes:
+                    preview.exception_codes.append(code)
             preview_id = str(uuid4())
             db.add(
                 JournalPreviewRow(
