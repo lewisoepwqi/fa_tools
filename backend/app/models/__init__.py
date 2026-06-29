@@ -4,6 +4,7 @@
 本模块的导入会触发共享表注册到 ``Base.metadata``，供 Alembic 和测试发现。
 """
 
+from app.models import associations  # noqa: F401  触发关联表注册到 Base.metadata
 from app.models.audit import AuditLog
 from app.models.company import BankAccount, Company
 from app.models.file import SourceFile

@@ -12,7 +12,7 @@ from app.main import app
 
 # Import all models so their tables register on Base.metadata before create_all.
 # 共享层模型 + 工具层模型（bank_journal）。
-from app.models import audit, company, file, user  # noqa: F401
+from app.models import associations, audit, company, file, user  # noqa: F401
 from app.models.company import BankAccount, Company
 from app.models.file import SourceFile
 from app.models.user import User
