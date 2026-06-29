@@ -5,10 +5,12 @@ description = "Financial automation tools backend"
 requires-python = ">=3.12"
 dependencies = [
   "alembic>=1.13.2",
+  "bcrypt>=4.1",
   "fastapi>=0.115.0",
   "openpyxl>=3.1.5",
   "passlib[bcrypt]>=1.7.4",
   "pydantic-settings>=2.4.0",
+  "PyJWT>=2.8",
   "python-jose[cryptography]>=3.3.0",
   "python-multipart>=0.0.9",
   "sqlalchemy>=2.0.32",
