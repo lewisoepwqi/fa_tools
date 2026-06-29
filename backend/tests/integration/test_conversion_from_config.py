@@ -222,5 +222,5 @@ def test_from_config_records_audit(client, upload_dir) -> None:
             "rule_ids": [rule_id],
         },
     )
-    logs = client.get("/api/audit-logs").json()
+    logs = client.get("/api/audit-logs").json()["items"]
     assert any(log["action"] == "conversion_run.created_from_config" for log in logs)

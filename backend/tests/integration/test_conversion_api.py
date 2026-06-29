@@ -294,7 +294,7 @@ def test_creating_a_bank_template_records_an_audit_event(client) -> None:
             },
         },
     )
-    logs = client.get("/api/audit-logs").json()
+    logs = client.get("/api/audit-logs").json()["items"]
     assert any(log["action"] == "bank_template.created" for log in logs)
 
 
@@ -392,7 +392,7 @@ def test_full_conversion_flow_end_to_end(client) -> None:
     assert "日期" in download.content.decode("utf-8-sig")
 
     # 7. Audit trail captured the full chain
-    logs = client.get("/api/audit-logs").json()
+    logs = client.get("/api/audit-logs").json()["items"]
     actions = {log["action"] for log in logs}
     for expected in {
         "file.uploaded", "conversion_run.created",
