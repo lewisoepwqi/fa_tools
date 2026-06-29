@@ -1,4 +1,6 @@
 import { apiClient } from '../../../api/client';
+import type { PreviewRow } from '../types/conversion';
+import type { Page } from '../types/pagination';
 
 export interface AdjustResult {
   row_id: string;
@@ -25,6 +27,18 @@ export async function adjustPreviewRow(
     reason
   });
   return response.data;
+}
+
+/** 分页拉取批次预览行（GET /api/tools/bank-journal/conversion-runs/{runId}/preview-rows）。 */
+export async function listPreviewRows(
+  runId: string,
+  params?: { limit?: number; offset?: number; status?: string }
+): Promise<Page<PreviewRow>> {
+  const res = await apiClient.get<Page<PreviewRow>>(
+    `/api/tools/bank-journal/conversion-runs/${runId}/preview-rows`,
+    { params }
+  );
+  return res.data;
 }
 
 /** 确认单行（POST /api/tools/bank-journal/preview-rows/{id}/confirm）。 */

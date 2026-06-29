@@ -11,6 +11,9 @@ export interface PreviewRow {
 export interface ConversionRunSummary {
   total_rows: number;
   parse_failed_rows?: number;
+  auto_confirmed_rows?: number;
+  needs_confirmation_rows?: number;
+  conflict_rows?: number;
 }
 
 /** 批次详情（含预览行）。 */
