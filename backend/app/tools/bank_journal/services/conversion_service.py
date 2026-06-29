@@ -756,12 +756,20 @@ def _summary_from_json(raw: dict[str, object] | None) -> ConversionRunSummary:
 
 
 def list_conversion_runs(
-    db: Session, company_id: str | None = None
+    db: Session,
+    company_id: str | None = None,
+    accessible: set[str] | None = None,
 ) -> list[ConversionRunListItemResponse]:
-    """返回所有批次（不含预览行），按创建时间倒序。"""
+    """返回所有批次（不含预览行），按创建时间倒序。
+
+    accessible 为 None 表示跨公司角色（不过滤）；为集合时仅返回集合内公司的批次
+    （空集合→ in_([])→空结果，符合最小权限原则）。
+    """
     query = db.query(ConversionRun)
     if company_id is not None:
         query = query.filter(ConversionRun.company_id == company_id)
+    if accessible is not None:
+        query = query.filter(ConversionRun.company_id.in_(accessible))
     runs = query.order_by(ConversionRun.created_at.desc()).all()
     return [
         ConversionRunListItemResponse(

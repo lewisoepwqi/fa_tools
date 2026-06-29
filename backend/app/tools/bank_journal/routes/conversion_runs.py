@@ -1,9 +1,10 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import DbSession
+from app.api.deps import CurrentUserDep, DbSession, accessible_company_filter, require
 from app.core.config import get_settings
+from app.core.permissions import Permission
 from app.services.audit_service import record_audit_event
 from app.tools.bank_journal.schemas.conversion import (
     ConversionRunCreate,
@@ -80,12 +81,16 @@ def dry_run(
     return dry_run_conversion(db, payload, upload_dir)
 
 
-@router.get("", response_model=list[ConversionRunListItemResponse])
+@router.get(
+    "",
+    response_model=list[ConversionRunListItemResponse],
+    dependencies=[Depends(require(Permission.READ))],
+)
 def list_runs(
-    db: DbSession, company_id: str | None = None
+    db: DbSession, user: CurrentUserDep, company_id: str | None = None
 ) -> list[ConversionRunListItemResponse]:
-    """批次列表（不含预览行），按创建时间倒序。"""
-    return list_conversion_runs(db, company_id)
+    """批次列表（不含预览行），按创建时间倒序。仅返回当前用户可访问公司的批次。"""
+    return list_conversion_runs(db, company_id, accessible_company_filter(user))
 
 
 @router.get("/{run_id}", response_model=ConversionRunResponse)
