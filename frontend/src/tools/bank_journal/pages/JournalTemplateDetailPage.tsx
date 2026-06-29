@@ -184,9 +184,11 @@ export function JournalTemplateDetailPage() {
             </Button>
           </Tooltip>
           <Button onClick={() => setHistoryOpen(true)}>版本历史</Button>
-          <Button onClick={handleToggleStatus}>
-            {data.status === 'active' ? '停用' : '启用'}
-          </Button>
+          <Tooltip title={!canManage ? '权限不足' : undefined}>
+            <Button onClick={handleToggleStatus} disabled={!canManage}>
+              {data.status === 'active' ? '停用' : '启用'}
+            </Button>
+          </Tooltip>
         </div>
         <Descriptions size="small" column={2} bordered>
           <Descriptions.Item label="模板ID">{data.id}</Descriptions.Item>

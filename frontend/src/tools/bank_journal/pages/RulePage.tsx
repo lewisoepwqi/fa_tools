@@ -282,11 +282,14 @@ export function RulePage() {
       key: 'status',
       width: 80,
       render: (_, r) => (
-        <Switch
-          size="small"
-          checked={r.status === 'active'}
-          onChange={(checked) => handleToggleStatus(r.id, checked ? 'active' : 'inactive')}
-        />
+        <Tooltip title={!canManage ? '权限不足' : undefined}>
+          <Switch
+            size="small"
+            checked={r.status === 'active'}
+            disabled={!canManage}
+            onChange={(checked) => handleToggleStatus(r.id, checked ? 'active' : 'inactive')}
+          />
+        </Tooltip>
       )
     },
     {
@@ -320,22 +323,25 @@ export function RulePage() {
           >
             详情
           </Button>
-          <Popconfirm
-            title="确定删除该规则？"
-            description="被转换批次引用的规则无法删除。"
-            okText="删除"
-            okButtonProps={{ danger: true }}
-            cancelText="取消"
-            onConfirm={(e) => {
-              e?.stopPropagation();
-              handleDelete(r.id);
-            }}
-            onCancel={(e) => e?.stopPropagation()}
-          >
-            <Button size="small" type="link" danger onClick={(e) => e.stopPropagation()}>
-              删除
-            </Button>
-          </Popconfirm>
+          <Tooltip title={!canManage ? '权限不足' : undefined}>
+            <Popconfirm
+              title="确定删除该规则？"
+              description="被转换批次引用的规则无法删除。"
+              okText="删除"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              disabled={!canManage}
+              onConfirm={(e) => {
+                e?.stopPropagation();
+                handleDelete(r.id);
+              }}
+              onCancel={(e) => e?.stopPropagation()}
+            >
+              <Button size="small" type="link" danger disabled={!canManage} onClick={(e) => e.stopPropagation()}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Tooltip>
         </Space>
       )
     }
