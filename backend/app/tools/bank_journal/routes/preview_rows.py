@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.deps import (
     CurrentUserDep,
@@ -63,14 +63,21 @@ def adjust_preview_row(
 def _require_row_company_access(db: DbSession, user: CurrentUserDep, row_id: str) -> None:
     """加载预览行 → 所属批次 → 按批次公司做写访问校验。
 
-    行/批次不存在时不在此处抛错，交由 service 层保持原有 404 语义（避免 404→403）。
+    区分两种 None：
+    - row 本身不存在 → return，交由 service 层保持原有 404 语义（避免 404→403）。
+    - row 存在但 run 已消失（孤儿）→ 无法确认归属，fail-closed：抛 403 而非放行。
     """
     row = db.query(JournalPreviewRow).filter(JournalPreviewRow.id == row_id).first()
     if row is None:
+        # 行不存在：交由 service 层抛 404，此处不干预
         return
     run = db.query(ConversionRun).filter(ConversionRun.id == row.conversion_run_id).first()
     if run is None:
-        return
+        # 孤儿行：父批次已丢失，无法校验归属，拒绝访问
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无法确认预览行所属公司，拒绝访问",
+        )
     require_company_access(user, run.company_id)
 
 

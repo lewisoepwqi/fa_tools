@@ -426,3 +426,58 @@ def test_custom_field_delete_other_company_forbidden(
         headers=auth_headers(user),
     )
     assert r.status_code == 403
+
+
+def test_rules_reorder_cross_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """co-B 的规则通过 reorder 端点被 co-A 用户操作，应返回 403。"""
+    c, db = client_with_db
+    b_rule_id = _seed_rule(db, "co-B")
+    user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
+    r = c.post(
+        "/api/tools/bank-journal/rules/reorder",
+        json={"items": [{"rule_id": b_rule_id, "priority": 10}]},
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_export_report_download_cross_company_forbidden(
+    client_with_db, make_user, auth_headers
+):
+    """co-B 的导出报告被 co-A 用户下载，应返回 403。"""
+    c, db = client_with_db
+    run_id = _seed_run(db, "co-B")
+    export_id = str(uuid4())
+    db.add(
+        Export(
+            id=export_id,
+            conversion_run_id=run_id,
+            file_type="csv",
+            storage_key=f"{export_id}.csv",
+            report_storage_key=f"{export_id}.report.json",
+            row_count=0,
+        )
+    )
+    db.commit()
+    user = make_user(db, roles=["processor"], company_ids=["co-A"])
+    r = c.get(
+        f"/api/tools/bank-journal/exports/{export_id}/report",
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 403
+
+
+def test_journal_templates_admin_sees_all(client_with_db, make_user, auth_headers):
+    """admin（跨公司角色）可看到所有公司的日记账模板。"""
+    c, db = client_with_db
+    _seed_journal_template(db, "co-A")
+    _seed_journal_template(db, "co-B")
+    user = make_user(db, roles=["admin"])
+    r = c.get(
+        "/api/tools/bank-journal/journal-templates", headers=auth_headers(user)
+    )
+    assert r.status_code == 200
+    companies = {item["company_id"] for item in r.json()}
+    assert {"co-A", "co-B"} <= companies

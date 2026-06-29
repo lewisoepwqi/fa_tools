@@ -256,12 +256,21 @@ def download_export_report(
 
 
 def _require_export_company_access(db: DbSession, user: CurrentUserDep, export: Export) -> None:
-    """加载导出所属批次 → 按批次公司做访问校验（批次缺失则不在此处改变 404 语义）。"""
+    """加载导出所属批次 → 按批次公司做访问校验。
+
+    区分两种 None：
+    - export 本身不存在 → 由调用方在调用此函数前已检查并抛 404，此处不再处理。
+    - export 存在但 run 已消失（孤儿）→ 无法确认归属，fail-closed：抛 403 而非放行。
+    """
     run = (
         db.query(ConversionRun)
         .filter(ConversionRun.id == export.conversion_run_id)
         .first()
     )
     if run is None:
-        return
+        # 孤儿导出：父批次已丢失，无法校验归属，拒绝访问
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无法确认导出所属公司，拒绝访问",
+        )
     require_company_access(user, run.company_id)
