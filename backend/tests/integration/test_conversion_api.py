@@ -720,6 +720,60 @@ def test_action_without_value_does_not_corrupt_row(client, upload_dir) -> None:
     assert matched_row["status"] == "needs_confirmation"
 
 
+def test_preview_rows_pagination(client, upload_dir) -> None:
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+    run = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "摘要": "summary",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [],
+            "rules": [],
+            "required_columns": [],
+        },
+    ).json()
+    run_id = run["id"]
+    full = client.get(
+        f"/api/tools/bank-journal/conversion-runs/{run_id}/preview-rows?limit=1&offset=0"
+    )
+    assert full.status_code == 200
+    body = full.json()
+    assert set(body) == {"items", "total", "limit", "offset"}
+    assert body["limit"] == 1 and body["offset"] == 0
+    assert len(body["items"]) <= 1
+    assert body["total"] >= len(body["items"])
+
+
+def test_preview_rows_limit_capped_at_500(client) -> None:
+    resp = client.get(
+        "/api/tools/bank-journal/conversion-runs/any-run-id/preview-rows?limit=9999"
+    )
+    assert resp.status_code == 422  # 超过上限 500 由 Query(le=500) 拦截
+
+
 def test_balance_discontinuity_flagged(client, upload_dir) -> None:
     """余额跳变行应携带 BALANCE_DISCONTINUITY 异常码，连续行不应携带。"""
     # 行1: income=500, balance=1500 → 首行不判

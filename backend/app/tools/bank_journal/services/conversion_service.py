@@ -38,6 +38,7 @@ from app.tools.bank_journal.schemas.conversion import (
     DryRunResponse,
     JournalPreviewRowData,
 )
+from app.tools.bank_journal.schemas.pagination import Page
 from app.tools.bank_journal.schemas.standard import StandardBankTransaction
 from app.tools.bank_journal.services.custom_field_service import load_custom_field_defs
 from app.tools.bank_journal.services.mapping_service import apply_mappings
@@ -775,6 +776,21 @@ def _preview_row_to_data(row: JournalPreviewRow) -> JournalPreviewRowData:
         exception_codes=[ExceptionCode(code) for code in (row.exception_codes_json or [])],
         matched_rule_version_ids=row.matched_rule_versions_json or [],
         rule_trace=_rule_trace_to_list(row.rule_trace_json),
+    )
+
+
+def list_preview_rows(
+    db: Session, run_id: str, limit: int, offset: int
+) -> Page[JournalPreviewRowData]:
+    """分页返回某批次的日记账预览行，按 row_index 升序。"""
+    base = db.query(JournalPreviewRow).filter(JournalPreviewRow.conversion_run_id == run_id)
+    total = base.count()
+    rows = base.order_by(JournalPreviewRow.row_index).offset(offset).limit(limit).all()
+    return Page[JournalPreviewRowData](
+        items=[_preview_row_to_data(r) for r in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
     )
 
 
