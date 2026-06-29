@@ -44,6 +44,7 @@ def create_mapping_profile(
         created_by=payload.version.created_by,
     )
     db.add(parent)
+    db.flush()  # mapping_profiles 先落库，version 的外键引用方有效
     db.add(version)
     db.commit()
     db.refresh(parent)

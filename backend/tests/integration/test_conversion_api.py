@@ -267,8 +267,9 @@ def test_list_bank_templates_returns_persisted_template(client) -> None:
         },
     ).json()
     listed = client.get("/api/tools/bank-journal/bank-templates").json()
-    assert any(t["id"] == create["id"] for t in listed)
-    assert listed[0]["latest_version"]["version_no"] == 1
+    created_in_list = next(t for t in listed if t["id"] == create["id"])
+    # 新建模板只有 1 个版本；version_no 应为 1
+    assert created_in_list["latest_version"]["version_no"] == 1
 
 
 def test_creating_a_bank_template_records_an_audit_event(client) -> None:

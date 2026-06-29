@@ -124,6 +124,9 @@ def run_conversion(
         mapping_profile_version_id=payload.mapping_profile_version_id,
     )
     db.add(run)
+    # 先将 conversion_runs 落库，确保后续子行（bank_transactions 等）的外键引用有效。
+    # SQLAlchemy 无 relationship() 时不保证 flush 顺序；显式 flush 消除竞态。
+    db.flush()
 
     for rule in rules:
         db.add(

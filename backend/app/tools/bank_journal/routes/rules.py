@@ -52,6 +52,7 @@ def create_rule(db: DbSession, payload: RuleCreate) -> RuleResponse:
         created_by=payload.version.created_by,
     )
     db.add(parent)
+    db.flush()  # rules 先落库，version 的外键引用方有效
     db.add(version)
     db.commit()
     db.refresh(parent)

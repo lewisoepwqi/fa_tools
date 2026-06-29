@@ -54,6 +54,7 @@ def create_bank_template(db: Session, payload: BankTemplateCreate) -> BankTempla
         created_by=payload.version.created_by,
     )
     db.add(parent)
+    db.flush()  # bank_templates 先落库，version 的外键引用方有效
     db.add(version)
     db.commit()
     db.refresh(parent)
@@ -220,6 +221,7 @@ def create_journal_template(
         created_by=payload.version.created_by,
     )
     db.add(parent)
+    db.flush()  # company_journal_templates 先落库，version 的外键引用方有效
     db.add(version)
     db.commit()
     db.refresh(parent)

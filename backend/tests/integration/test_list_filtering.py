@@ -143,13 +143,15 @@ def test_list_mappings_no_filter_returns_all(client) -> None:
     """不带过滤参数时行为不变：返回全部（含未绑定）。"""
     bank = _create_bank_template(client)
     journal = _create_journal_template(client)
-    _bound = _create_mapping(
+    bound = _create_mapping(
         client, bank_template_id=bank, journal_template_id=journal, name="绑定"
     )
-    _unbound = _create_mapping(client, name="未绑定")
+    unbound = _create_mapping(client, name="未绑定")
 
     listed = client.get("/api/tools/bank-journal/mapping-profiles").json()
-    assert len(listed) == 2
+    listed_ids = {m["id"] for m in listed}
+    # 测试夹具预置了 mp-1；本测试另建 2 条，共 ≥ 2 条；仅断言本测试创建的都在列表中
+    assert {bound, unbound} <= listed_ids
 
 
 # ---------------------------------------------------------------------------
@@ -171,11 +173,13 @@ def test_list_rules_filter_by_scope(client) -> None:
 
 def test_list_rules_no_filter_returns_all(client) -> None:
     bank_id = _create_bank_template(client)
-    _r1 = _create_rule(client, name="绑定规则", scope_type="bank_template", scope_id=bank_id)
-    _r2 = _create_rule(client, name="全局规则")
+    r1 = _create_rule(client, name="绑定规则", scope_type="bank_template", scope_id=bank_id)
+    r2 = _create_rule(client, name="全局规则")
 
     listed = client.get("/api/tools/bank-journal/rules").json()
-    assert len(listed) == 2
+    listed_ids = {r["id"] for r in listed}
+    # 测试夹具预置了 rule-1/r1/rule-auto；本测试另建 2 条；仅断言本测试创建的都在列表中
+    assert {r1, r2} <= listed_ids
 
 
 # ---------------------------------------------------------------------------
