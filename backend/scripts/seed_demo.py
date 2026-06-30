@@ -37,6 +37,9 @@ def seed() -> None:
                 status="active",
             )
             db.add(company)
+            # 先 flush 落库公司，否则 SQLite 强制外键下 SQLAlchemy 可能把银行账号
+            # INSERT 排在公司之前，触发 FOREIGN KEY constraint failed。
+            db.flush()
             print(f"[+] 创建公司: {DEMO_COMPANY_ID} ({company.name})")
         else:
             print(f"[=] 公司已存在: {DEMO_COMPANY_ID}")
