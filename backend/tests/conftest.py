@@ -172,19 +172,30 @@ def _seed_test_parents(session_local: sessionmaker) -> None:  # type: ignore[typ
 
 
 def _create_test_engine():
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    url = get_settings().test_database_url
+    if url.startswith("sqlite"):
+        engine = create_engine(
+            url,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
 
-    @event.listens_for(engine, "connect")
-    def _fk_on(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+        @event.listens_for(engine, "connect")
+        def _fk_on(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
 
-    return engine
+        return engine
+    # PostgreSQL 等非 SQLite 方言：普通连接池，不挂 SQLite 专属 pragma
+    return create_engine(url)
+
+
+# PG 专属测试跳过标记：本地无 PG 时自动 skip，设 TEST_DATABASE_URL 指向 PG 后运行
+requires_pg = pytest.mark.skipif(
+    not get_settings().test_database_url.startswith("postgresql"),
+    reason="需要 PostgreSQL（设 TEST_DATABASE_URL 指向 PG 后运行）",
+)
 
 
 def _admin_auth_header() -> dict[str, str]:
