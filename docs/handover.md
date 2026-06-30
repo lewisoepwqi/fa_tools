@@ -291,7 +291,7 @@ W4 数据运维完成，**后端 325 测试全绿 + ruff clean + 前端 build ex
 
 **已知 follow-up（Minor，opus 复审记录，非阻塞）**：同步路径 4xx（源文件 404）遗留 PENDING 孤儿批次；`compare_metadata` 仅 SQLite 实测、PG 侧仅 `alembic upgrade` smoke；`FAILED` 分支重取 run 无 None 守卫（不触发）；`PROCESSING` 未独立提交（异步化时补）；`BuiltinFieldOverride` 未复用 `TimestampMixin`；CSV「内存有界」措辞偏强。
 
-**CI 首次运行**：`.github/workflows/ci.yml` 在本 PR 推送后首次在 GitHub 运行；需观察 `backend-pg` job 是否暴露其他 SQLite-only 假设（类型/排序/server_default 在 PG 的差异）。
+**CI 已跑通（两 job 均绿）**：`.github/workflows/ci.yml` 首次运行即兑现 PG job 价值——暴露并修复了 2 个 SQLite 耦合问题：① conftest 测试隔离依赖「SQLite 内存库每引擎=新库」，PG 持久共享库下需 setup 先 `drop_all` 再 `create_all`（否则 `_seed_test_parents` 重复播种 admin 角色 UniqueViolation）；② `test_fk_pragma` 的 `PRAGMA foreign_keys` 是 SQLite 专属语法，PG 上 skip（PG 原生强制 FK）。修复后 **backend-sqlite + backend-pg 双 job 全绿**，迁移与全量集成测试在真实 PostgreSQL 16 验证通过。
 
 **W4 工作流自此闭合，三个工作流（W3→W5→W4）全部收口。**
 
