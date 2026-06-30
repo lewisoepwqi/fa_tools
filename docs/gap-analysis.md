@@ -5,6 +5,12 @@
 > 核查方式：逐条 grep + 引用代码行号验证（3 个并行审计覆盖后端引擎 / 导出确认 / 认证版本化前端三个领域）
 > 结论：当前实现 = PRD 的"最小可跑通骨架"，离 MVP 验收标准仍有系统性缺口
 
+> **状态更新（2026-06-30，W4 闭合时）**：
+> - **W4 数据运维已闭合**（分支 `feat/w4-data-ops`，后端 325 测试绿 + 前端 build 绿）。交付：迁移 `compare_metadata` 无 diff 契约（首跑抓到 0003 漏列真 bug 并修）、conftest PG 可切换 + GitHub Actions CI（SQLite + PG service）+ docker healthcheck、`RunStatus` 状态机 + 转换失败置 FAILED 不 500（迁移 0006）、流式解析（XLSX 真流式）、failed 错误暴露。
+> - **现状修正**：**P0-2（批次快照版本 ID）实为已实现**——`ConversionRun` 的 3 个版本 FK 列在 `run_conversion`/`run_conversion_from_config` 已赋值、消费端已用；§2 P0-2「永远为 NULL」描述过时，非缺口。
+> - **W4 显式推迟（已文档化）**：Celery/RQ 真异步 + 202 + 前端轮询（无 Docker/broker；`process_conversion_run` 已收敛为可投递单元，rollout 见 spec §5 / `docs/data-ops-runbook.md`）；JSONB 迁移（无 DB 层 JSON 查询，YAGNI）；P1-3 去重哈希·余额连续性（引擎层，非数据运维，非 MVP）仍未做。
+> - **三个工作流（W3→W5→W4）全部收口。** 剩余真缺口主要在引擎层（P1-1 异常码补全、P1-2 金额模式、P1-5 日期规则、P1-6 conditional 映射、P1-7/8 表头自动识别+detect 页）与 P1-3，均属后续独立工作流。
+>
 > **状态更新（2026-06-30，W5 闭合时）**：
 > - **W5 已闭合**（分支 `feat/w5-frontend`，后端 318 测试绿 + 前端 build 绿）。**关键修正：本文档（2026-06-27）严重过时**——P0-1（编辑=新版本端点）、P2-4（启停 `PATCH /status`、规则 reorder）及 §8 矩阵中除「拖拽 UI」外的全部「后端端点 + 前端新建/编辑/版本历史/停用 UI」**在 W3 期即已实现**，并非缺口；`*.modified`/`*.disabled`/`rule.priority_changed` 审计亦已补全（P2-3 完全闭合）。
 > - **W5 实际补齐**：列表分页（4 实体 + 批次，后端 `Page[T]` + 前端接入）、preview-rows 分页接入（§5 #9 转换预览）、日记账动态列、规则拖拽重排 UI（§8 矩阵最后一项）、`GET /api/companies` + 公司选择器修复（§5 #3 上传页选择器去写死的关键依赖）、停用/删除按钮 + 菜单权限门控、规则 reorder 审计 company_id 修复、规则列表按 priority 升序。

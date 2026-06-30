@@ -1,5 +1,6 @@
 import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -368,6 +369,15 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {/* failed 批次：显示错误原因 */}
+      {run.status === 'failed' && (
+        <Alert
+          type="error"
+          message="转换失败"
+          description={run.error_message ?? '未知错误，请联系管理员。'}
+          showIcon
+        />
+      )}
       {/* 第一段：页头 + 概览 */}
       <Card className="work-card">
         <div className="toolbar" style={{ marginBottom: 16 }}>

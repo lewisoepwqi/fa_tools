@@ -172,19 +172,30 @@ def _seed_test_parents(session_local: sessionmaker) -> None:  # type: ignore[typ
 
 
 def _create_test_engine():
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    url = get_settings().test_database_url
+    if url.startswith("sqlite"):
+        engine = create_engine(
+            url,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
 
-    @event.listens_for(engine, "connect")
-    def _fk_on(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+        @event.listens_for(engine, "connect")
+        def _fk_on(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
 
-    return engine
+        return engine
+    # PostgreSQL 等非 SQLite 方言：普通连接池，不挂 SQLite 专属 pragma
+    return create_engine(url)
+
+
+# PG 专属测试跳过标记：本地无 PG 时自动 skip，设 TEST_DATABASE_URL 指向 PG 后运行
+requires_pg = pytest.mark.skipif(
+    not get_settings().test_database_url.startswith("postgresql"),
+    reason="需要 PostgreSQL（设 TEST_DATABASE_URL 指向 PG 后运行）",
+)
 
 
 def _admin_auth_header() -> dict[str, str]:
@@ -206,6 +217,9 @@ def _admin_auth_header() -> dict[str, str]:
 @pytest.fixture
 def client() -> Generator[TestClient, None, None]:
     engine = _create_test_engine()
+    # 持久库（PostgreSQL）下各测试共享同一数据库：先 drop 再 create 保证干净起步，
+    # 避免上一测试残留致 _seed_test_parents 重复播种冲突（SQLite 内存库为无害 no-op）。
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     test_session_local = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     _seed_test_parents(test_session_local)
@@ -237,6 +251,9 @@ def client_with_db() -> Generator[tuple[TestClient, Session], None, None]:
     on persisted rows (e.g., verifying no orphan BankTransaction rows exist).
     """
     engine = _create_test_engine()
+    # 持久库（PostgreSQL）下各测试共享同一数据库：先 drop 再 create 保证干净起步，
+    # 避免上一测试残留致 _seed_test_parents 重复播种冲突（SQLite 内存库为无害 no-op）。
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     test_session_local = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     _seed_test_parents(test_session_local)

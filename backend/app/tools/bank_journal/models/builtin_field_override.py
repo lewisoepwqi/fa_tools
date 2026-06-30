@@ -35,6 +35,11 @@ class BuiltinFieldOverride(Base, IdMixin):
     header_keywords_override: Mapped[list[str] | None] = mapped_column(JSON)
     # 仅影响规则操作符过滤（text/amount/date/enum），不影响实际解析
     type_override: Mapped[str | None] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

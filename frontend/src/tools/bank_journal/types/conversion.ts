@@ -32,6 +32,8 @@ export interface ConversionRunResponse {
   mapping_profile_version_id?: string | null;
   /** Task 9：按绑定日记账模板版本 columns_json 动态渲染列；无绑定时由后端从预览行键并集回退。 */
   journal_columns?: string[];
+  /** failed 批次的错误原因。 */
+  error_message?: string | null;
 }
 
 /** 批次列表项（不含预览行）。 */
@@ -43,6 +45,8 @@ export interface ConversionRunListItem {
   summary: ConversionRunSummary;
   created_at?: string | null;
   completed_at?: string | null;
+  /** failed 批次的错误原因。 */
+  error_message?: string | null;
 }
 
 export interface UploadedFile {

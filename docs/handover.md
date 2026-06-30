@@ -178,6 +178,8 @@ cd backend && alembic upgrade head
 ```
 
 > 完整约定见 `AGENTS.md`。
+>
+> 数据运维（PG 实测/JSON-JSONB/异步 rollout）见 `docs/data-ops-runbook.md`。
 
 ---
 
@@ -271,6 +273,27 @@ cd backend && alembic upgrade head
 4. **已知功能缺口 → 已划入 W5**（见下方「W3 收尾结论」）：
    - 跨公司角色（admin/auditor）前端无法指定具体公司创建数据——缺 `GET /api/companies` 列表端点，前端公司选择器写死。
    - 模板/规则等的启用/停用 Switch 前端未做权限门控（processor/reviewer 也能看到开关，但点击会被后端拒绝，属技术债）。
+
+---
+
+### W4 收尾结论（2026-06-30 闭合，分支 `feat/w4-data-ops`）
+
+W4 数据运维完成，**后端 325 测试全绿 + ruff clean + 前端 build exit 0**。7 任务 TDD + 逐任务复审 + opus 整分支最终复审 + 必修 I1 闭合。详细操作见 `docs/data-ops-runbook.md`。
+
+**现状修正**：开工探查修正两处过时认知——① **P0-2 批次快照版本 FK 已实现**（`run_conversion`/`run_conversion_from_config` 已赋值 3 个版本 FK 列，消费端已用，W4 不含 P0-2）；② 迁移契约有半成品但缺 `compare_metadata` 自动比对。
+
+**W4 交付**：
+- **A 迁移契约**：`compare_metadata` autogenerate 无 diff 测试（钉死 conftest `create_all` 与迁移两条 schema 路径；**首跑即抓到真 bug**——迁移 0003 建了 `builtin_field_overrides.created_at` 但 ORM 模型漏声明，已补）。
+- **B PG 实测基础设施**：`conftest` 按 `test_database_url` 切库（SQLite 默认 / PG 可选，`requires_pg` skip）；`docker-compose` postgres 加 healthcheck；**GitHub Actions CI**（`backend-sqlite` 全量+ruff / `backend-pg` postgres service + `alembic upgrade head` + 全量）；JSON 保持通用 `JSON`（**不迁 JSONB，YAGNI**——当前无 DB 层 JSON 查询）+ `data-ops-runbook.md`。
+- **C 大文件鲁棒性**：`RunStatus` 状态机（pending/processing/completed/failed）+ `run_conversion` 拆为 `create_pending_run`/`process_conversion_run`（**失败 rollback→重取→FAILED+error_message，不再整请求 500**）+ 迁移 0006（`error_message` 列）+ **流式解析**（XLSX 真流式 `iter_rows`；CSV 受限于编码探测仍 O(file)，仅行迭代惰性）+ failed 批次错误暴露（列表/详情 + 前端 `Alert`）。`run_conversion` 对外契约不变。
+
+**显式推迟（spec §1 Out + §5，均已文档化）**：Celery/RQ 真异步 worker + 202 + 前端轮询（无 Docker/broker；状态机+流式已把接入收敛为「`process_conversion_run` 改投递 Celery」的小改动，设计见 spec §5 / runbook §4）；JSONB 迁移（无查询需求，路径已文档化）；去重哈希/余额连续性（P1-3，引擎层非数据运维）。
+
+**已知 follow-up（Minor，opus 复审记录，非阻塞）**：同步路径 4xx（源文件 404）遗留 PENDING 孤儿批次；`compare_metadata` 仅 SQLite 实测、PG 侧仅 `alembic upgrade` smoke；`FAILED` 分支重取 run 无 None 守卫（不触发）；`PROCESSING` 未独立提交（异步化时补）；`BuiltinFieldOverride` 未复用 `TimestampMixin`；CSV「内存有界」措辞偏强。
+
+**CI 已跑通（两 job 均绿）**：`.github/workflows/ci.yml` 首次运行即兑现 PG job 价值——暴露并修复了 2 个 SQLite 耦合问题：① conftest 测试隔离依赖「SQLite 内存库每引擎=新库」，PG 持久共享库下需 setup 先 `drop_all` 再 `create_all`（否则 `_seed_test_parents` 重复播种 admin 角色 UniqueViolation）；② `test_fk_pragma` 的 `PRAGMA foreign_keys` 是 SQLite 专属语法，PG 上 skip（PG 原生强制 FK）。修复后 **backend-sqlite + backend-pg 双 job 全绿**，迁移与全量集成测试在真实 PostgreSQL 16 验证通过。
+
+**W4 工作流自此闭合，三个工作流（W3→W5→W4）全部收口。**
 
 ---
 

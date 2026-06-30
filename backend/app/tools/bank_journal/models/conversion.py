@@ -52,6 +52,7 @@ class ConversionRun(Base, IdMixin):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     summary_json: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ConversionRunFile(Base, IdMixin):

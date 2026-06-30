@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.file import SourceFile
 from app.tools.bank_journal.domain.balance import check_balance_continuity
 from app.tools.bank_journal.domain.dedup import mark_duplicates, row_hash
-from app.tools.bank_journal.enums import AmountMode, ExceptionCode, PreviewStatus
+from app.tools.bank_journal.enums import AmountMode, ExceptionCode, PreviewStatus, RunStatus
 from app.tools.bank_journal.models.conversion import (
     BankTransaction,
     ConversionRun,
@@ -104,21 +104,15 @@ def _preview_status(
     return PreviewStatus.NEEDS_CONFIRMATION
 
 
-def run_conversion(
-    db: Session, payload: ConversionRunCreate, upload_dir: Path
-) -> ConversionRunResponse:
-    # 契约模型 → dict，喂给现有 domain/service。
-    # by_alias=True: 还原 not_→not（ConditionIn.not_ alias="not"）。
-    # exclude_none=True: 避免空字段（all/any/not/field=None）干扰 evaluate() 的键存在检测。
-    mappings = [m.model_dump(by_alias=True, exclude_none=True) for m in payload.mappings]
+def create_pending_run(db: Session, payload: ConversionRunCreate) -> ConversionRun:
+    """建立 PENDING 状态的转换批次，关联规则版本快照，flush 但不 commit，返回 run。"""
     rules = [r.model_dump(by_alias=True, exclude_none=True) for r in payload.rules]
 
     run = ConversionRun(
         id=str(uuid4()),
         company_id=payload.company_id,
         bank_account_id=payload.bank_account_id,
-        status="completed",
-        completed_at=datetime.now(UTC),
+        status=RunStatus.PENDING,
         summary_json={},
         bank_template_version_id=payload.bank_template_version_id,
         company_journal_template_version_id=payload.company_journal_template_version_id,
@@ -137,6 +131,26 @@ def run_conversion(
                 rule_version_id=rule["version_id"],
             )
         )
+
+    return run
+
+
+def _parse_and_build_rows(
+    db: Session,
+    run: ConversionRun,
+    payload: ConversionRunCreate,
+    upload_dir: Path,
+) -> tuple[list[JournalPreviewRowData], int]:
+    """解析所有源文件 + 构建预览行 + 去重 + 降级，写入 session（未提交）。
+
+    返回 (preview_rows, parse_failed_count)。
+    此函数是模块级函数，方便测试通过 monkeypatch 注入失败场景。
+    """
+    # 契约模型 → dict，喂给现有 domain/service。
+    # by_alias=True: 还原 not_→not（ConditionIn.not_ alias="not"）。
+    # exclude_none=True: 避免空字段（all/any/not/field=None）干扰 evaluate() 的键存在检测。
+    mappings = [m.model_dump(by_alias=True, exclude_none=True) for m in payload.mappings]
+    rules = [r.model_dump(by_alias=True, exclude_none=True) for r in payload.rules]
 
     config = payload.bank_parse_config
     amount_mode = AmountMode(config.amount_mode)
@@ -365,41 +379,105 @@ def run_conversion(
             pdata.status = PreviewStatus.NEEDS_CONFIRMATION
             preview_db_row.status = PreviewStatus.NEEDS_CONFIRMATION
 
-    status_counts: Counter[str] = Counter(p.status for p in preview_rows)
-    run.summary_json = {
-        "total_rows": len(preview_rows),
-        "parse_failed_rows": parse_failed_count,
-        "auto_confirmed_rows": status_counts.get(PreviewStatus.AUTO_CONFIRMED, 0),
-        "needs_confirmation_rows": status_counts.get(PreviewStatus.NEEDS_CONFIRMATION, 0),
-        "conflict_rows": status_counts.get(PreviewStatus.CONFLICT, 0),
-    }
+    return preview_rows, parse_failed_count
+
+
+def process_conversion_run(
+    db: Session,
+    run_id: str,
+    upload_dir: Path,
+    payload: ConversionRunCreate,
+) -> ConversionRunResponse:
+    """PROCESSING → try 解析/落库/summary → COMPLETED；异常 → FAILED + error_message，不抛 500。"""
+    run = db.get(ConversionRun, run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversion run not found: {run_id}",
+        )
+
+    run.status = RunStatus.PROCESSING
+    db.flush()
+
+    try:
+        preview_rows, parse_failed_count = _parse_and_build_rows(db, run, payload, upload_dir)
+
+        status_counts: Counter[str] = Counter(p.status for p in preview_rows)
+        run.summary_json = {
+            "total_rows": len(preview_rows),
+            "parse_failed_rows": parse_failed_count,
+            "auto_confirmed_rows": status_counts.get(PreviewStatus.AUTO_CONFIRMED, 0),
+            "needs_confirmation_rows": status_counts.get(PreviewStatus.NEEDS_CONFIRMATION, 0),
+            "conflict_rows": status_counts.get(PreviewStatus.CONFLICT, 0),
+        }
+        run.status = RunStatus.COMPLETED
+        run.completed_at = datetime.now(UTC)
+        db.commit()
+
+        # 优先从绑定的日记账模板版本取列定义；无绑定则从本批预览行键并集回退。
+        journal_cols = _journal_columns_from_template(
+            db, payload.company_journal_template_version_id
+        )
+        if not journal_cols:
+            journal_cols = _journal_columns_from_rows_data(preview_rows)
+
+        return ConversionRunResponse(
+            id=run.id,
+            status=run.status,
+            summary=ConversionRunSummary(
+                total_rows=len(preview_rows),
+                parse_failed_rows=parse_failed_count,
+                auto_confirmed_rows=status_counts.get(PreviewStatus.AUTO_CONFIRMED, 0),
+                needs_confirmation_rows=status_counts.get(PreviewStatus.NEEDS_CONFIRMATION, 0),
+                conflict_rows=status_counts.get(PreviewStatus.CONFLICT, 0),
+            ),
+            preview_rows=preview_rows,
+            company_id=run.company_id,
+            bank_account_id=run.bank_account_id,
+            created_at=run.created_at,
+            completed_at=run.completed_at,
+            bank_template_version_id=run.bank_template_version_id,
+            company_journal_template_version_id=run.company_journal_template_version_id,
+            mapping_profile_version_id=run.mapping_profile_version_id,
+            journal_columns=journal_cols,
+        )
+
+    except HTTPException:
+        # 用户输入类错误（404 源文件不存在等）：回滚 PROCESSING 状态，直接重抛，不污染 run 状态。
+        db.rollback()
+        raise
+    except Exception as e:  # noqa: BLE001
+        # 回滚部分写入的 preview rows / bank_transactions 等。
+        # run 记录本身已在上一事务提交，rollback 不影响。
+        db.rollback()
+        # rollback 后 ORM 对象过期，必须重取 run。
+        run = db.get(ConversionRun, run_id)
+        run.status = RunStatus.FAILED
+        run.error_message = str(e)[:2000]
+        db.commit()
+        return ConversionRunResponse(
+            id=run.id,
+            status=RunStatus.FAILED,
+            error_message=run.error_message,
+            summary=ConversionRunSummary(),
+            preview_rows=[],
+            company_id=run.company_id,
+            bank_account_id=run.bank_account_id,
+            created_at=run.created_at,
+            completed_at=None,
+            bank_template_version_id=run.bank_template_version_id,
+            company_journal_template_version_id=run.company_journal_template_version_id,
+            mapping_profile_version_id=run.mapping_profile_version_id,
+        )
+
+
+def run_conversion(
+    db: Session, payload: ConversionRunCreate, upload_dir: Path
+) -> ConversionRunResponse:
+    """建立 pending run 后立即处理（同步）；签名与返回类型不变。"""
+    run = create_pending_run(db, payload)
     db.commit()
-
-    # 优先从绑定的日记账模板版本取列定义；无绑定则从本批预览行键并集回退。
-    journal_cols = _journal_columns_from_template(db, payload.company_journal_template_version_id)
-    if not journal_cols:
-        journal_cols = _journal_columns_from_rows_data(preview_rows)
-
-    return ConversionRunResponse(
-        id=run.id,
-        status=run.status,
-        summary=ConversionRunSummary(
-            total_rows=len(preview_rows),
-            parse_failed_rows=parse_failed_count,
-            auto_confirmed_rows=status_counts.get(PreviewStatus.AUTO_CONFIRMED, 0),
-            needs_confirmation_rows=status_counts.get(PreviewStatus.NEEDS_CONFIRMATION, 0),
-            conflict_rows=status_counts.get(PreviewStatus.CONFLICT, 0),
-        ),
-        preview_rows=preview_rows,
-        company_id=run.company_id,
-        bank_account_id=run.bank_account_id,
-        created_at=run.created_at,
-        completed_at=run.completed_at,
-        bank_template_version_id=run.bank_template_version_id,
-        company_journal_template_version_id=run.company_journal_template_version_id,
-        mapping_profile_version_id=run.mapping_profile_version_id,
-        journal_columns=journal_cols,
-    )
+    return process_conversion_run(db, run.id, upload_dir, payload)
 
 
 # ---------------------------------------------------------------------------
@@ -864,6 +942,7 @@ def list_conversion_runs(
             bank_template_version_id=run.bank_template_version_id,
             company_journal_template_version_id=run.company_journal_template_version_id,
             mapping_profile_version_id=run.mapping_profile_version_id,
+            error_message=run.error_message,
         )
         for run in runs
     ]
@@ -938,4 +1017,5 @@ def get_conversion_run(db: Session, run_id: str) -> ConversionRunResponse:
         company_journal_template_version_id=run.company_journal_template_version_id,
         mapping_profile_version_id=run.mapping_profile_version_id,
         journal_columns=journal_cols,
+        error_message=run.error_message,
     )

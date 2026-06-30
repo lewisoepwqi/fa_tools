@@ -1,6 +1,13 @@
 from enum import StrEnum
 
 
+class RunStatus(StrEnum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class FileStatus(StrEnum):
     PENDING = "pending"
     PARSING = "parsing"

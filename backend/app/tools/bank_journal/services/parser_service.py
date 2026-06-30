@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import csv
+import io
+import itertools
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -130,7 +133,7 @@ def parse_bank_rows(
     path: str | Path,
     config: BankTemplateParseConfig,
 ) -> list[ParsedBankRow]:
-    """解析银行流水，逐行返回结果。
+    """解析银行流水，逐行返回结果。流式处理，不全量物化源行列表。
 
     与 `parse_bank_statement` 不同，本函数**不会因单行解析错误中断**：
     日期/金额/方向无法解析的行会产出带异常码的 `ParsedBankRow`（transaction
@@ -139,15 +142,18 @@ def parse_bank_rows(
     仅以下结构性错误会抛出（与单行数据无关）：
     - 表头行越界、Sheet 不存在、不支持的文件类型。
     """
-    rows = _read_rows(path, config.file_type, config.sheet_name)
-    if config.header_row_index >= len(rows):
-        raise ValueError("Header row index is out of range")
-
-    header_row = rows[config.header_row_index]
+    header_row: list[CellValue] | None = None
     results: list[ParsedBankRow] = []
 
-    for row_index in range(config.data_start_row_index, len(rows)):
-        row = rows[row_index]
+    for row_index, row in enumerate(_read_rows(path, config.file_type, config.sheet_name)):
+        if row_index == config.header_row_index:
+            header_row = row
+            continue
+        if row_index < config.data_start_row_index:
+            continue
+        # 若已越过 data_start 但尚未见到 header，配置越界
+        if header_row is None:
+            raise ValueError("Header row index is out of range")
         if _row_is_empty(row):
             continue
 
@@ -158,6 +164,10 @@ def parse_bank_rows(
 
         parsed = _try_parse_row(normalized_row, raw_row, row_index + 1, config)
         results.append(parsed)
+
+    # 文件行数不足以到达 header_row_index
+    if header_row is None:
+        raise ValueError("Header row index is out of range")
 
     return results
 
@@ -287,8 +297,13 @@ def detect_bank_template_config(
     返回可直接填入 `BankTemplateVersionCreate` 的 dict。
     """
     resolved_sheet = sheet_name or _first_sheet_name(path, file_type)
-    rows = _read_rows(path, file_type, resolved_sheet)
-    header_row_index = detect_header_row(rows)
+    it = _read_rows(path, file_type, resolved_sheet)
+    # 表头检测只需前 scan_limit 行；chain 回链剩余，无需重开文件
+    scan_limit = 30
+    window = list(itertools.islice(it, scan_limit))
+    header_row_index = detect_header_row(window)
+    # 模板检测需随机访问完整行列表（样本文件，物化可接受）
+    rows = list(itertools.chain(window, it))
     header_row = rows[header_row_index] if header_row_index < len(rows) else []
     data_start_row_index = _detect_data_start_row(rows, header_row_index)
 
@@ -462,26 +477,45 @@ def _read_csv_text(file_path: Path) -> str:
     raise ValueError("Unable to decode CSV: tried utf-8 and gb18030")
 
 
-def _read_rows(path: str | Path, file_type: str, sheet_name: str) -> list[list[CellValue]]:
+def _iter_csv_rows(file_path: Path) -> Iterator[list[CellValue]]:
+    """流式迭代 CSV 行（惰性生成器，不全量物化行列表）。
+
+    编码检测需完整读取字节（utf-8-sig 优先，gb18030 兜底），之后用 io.StringIO
+    包装成文件对象，让 csv.reader 逐行惰性消费，避免 splitlines() 二次物化。
+    StringIO 不持有文件句柄，无资源泄漏风险。
+    """
+    text = _read_csv_text(file_path)
+    for row in csv.reader(io.StringIO(text)):
+        yield [_clean_cell(cell) for cell in row]
+
+
+def _iter_xlsx_rows(file_path: Path, sheet_name: str) -> Iterator[list[CellValue]]:
+    """流式迭代 XLSX 行（read_only + iter_rows，不全量物化行列表）。
+
+    workbook 在 finally 块关闭：生成器正常耗尽或被 close() 时均触发 finally，
+    不存在句柄泄漏。
+    """
+    workbook = load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        if sheet_name not in workbook.sheetnames:
+            raise ValueError(f"Sheet not found: {sheet_name}")
+        sheet = workbook[sheet_name]
+        for row in sheet.iter_rows(values_only=True):
+            yield list(row)
+    finally:
+        workbook.close()
+
+
+def _read_rows(path: str | Path, file_type: str, sheet_name: str) -> Iterator[list[CellValue]]:
+    """返回文件行的惰性迭代器（不全量物化）。调用方按需消费或 list() 物化。"""
     file_path = Path(path)
     normalized_type = file_type.lower()
 
     if normalized_type == "csv":
-        text = _read_csv_text(file_path)
-        return [[_clean_cell(cell) for cell in row] for row in csv.reader(text.splitlines())]
+        return _iter_csv_rows(file_path)
 
     if normalized_type == "xlsx":
-        workbook = load_workbook(file_path, read_only=True, data_only=True)
-        try:
-            if sheet_name not in workbook.sheetnames:
-                raise ValueError(f"Sheet not found: {sheet_name}")
-            sheet = workbook[sheet_name]
-            return [
-                list(row)
-                for row in sheet.iter_rows(values_only=True)
-            ]
-        finally:
-            workbook.close()
+        return _iter_xlsx_rows(file_path, sheet_name)
 
     if normalized_type == "xls":
         raise ValueError("Unsupported file type: xls")
