@@ -250,7 +250,7 @@ export function RulePage() {
     setItems(next); // 乐观更新
 
     try {
-      await reorderRules(next.map((r, i) => ({ rule_id: r.id, priority: i + 1 })));
+      await reorderRules(next.map((r, i) => ({ rule_id: r.id, priority: (page - 1) * pageSize + i + 1 })));
       message.success('优先级已更新');
     } catch (err) {
       message.error(err instanceof Error ? err.message : '排序保存失败，已还原');

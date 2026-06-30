@@ -4,7 +4,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi import status as http_status
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import and_, func
+from sqlalchemy.orm import aliased
 
 from app.api.deps import (
     CurrentUserDep,
@@ -123,11 +124,29 @@ def list_rules(
         query = query.filter(Rule.scope_id == scope_id)
     # 软删除项不在列表/下拉中展示
     query = query.filter(Rule.status != RecordStatus.DELETED.value)
+
+    # 按最新版本的 priority 升序排序（NULL 排最后），次级键 Rule.id 保稳定分页
+    latest_sub = (
+        db.query(RuleVersion.rule_id, func.max(RuleVersion.version_no).label("mvno"))
+        .group_by(RuleVersion.rule_id)
+        .subquery()
+    )
+    RV = aliased(RuleVersion)
+    query = (
+        query.outerjoin(latest_sub, latest_sub.c.rule_id == Rule.id)
+        .outerjoin(RV, and_(RV.rule_id == Rule.id, RV.version_no == latest_sub.c.mvno))
+    )
     total = query.count()
-    parents = query.order_by(Rule.created_at.desc()).offset(offset).limit(limit).all()
+    parents = (
+        query.order_by(RV.priority.asc().nullslast(), Rule.id.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     if not parents:
         return Page[RuleResponse](items=[], total=total, limit=limit, offset=offset)
     parent_ids = [p.id for p in parents]
+    # 取每条规则的最新版本对象（用于构造 response）
     latest_no = (
         db.query(
             RuleVersion.rule_id.label("pid"),

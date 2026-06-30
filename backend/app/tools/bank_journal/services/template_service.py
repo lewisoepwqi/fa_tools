@@ -80,7 +80,12 @@ def list_bank_templates(
     # 软删除项不在列表/下拉中展示（删除仅置 status=deleted，行与版本保留）
     query = query.filter(BankTemplate.status != RecordStatus.DELETED.value)
     total = query.count()
-    parents = query.order_by(BankTemplate.created_at.desc()).offset(offset).limit(limit).all()
+    parents = (
+        query.order_by(BankTemplate.created_at.desc(), BankTemplate.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     if not parents:
         return Page[BankTemplateResponse](items=[], total=total, limit=limit, offset=offset)
     parent_ids = [p.id for p in parents]
@@ -263,7 +268,10 @@ def list_journal_templates(
     query = query.filter(CompanyJournalTemplate.status != RecordStatus.DELETED.value)
     total = query.count()
     parents = (
-        query.order_by(CompanyJournalTemplate.created_at.desc()).offset(offset).limit(limit).all()
+        query.order_by(CompanyJournalTemplate.created_at.desc(), CompanyJournalTemplate.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
     )
     if not parents:
         return Page[CompanyJournalTemplateResponse](
