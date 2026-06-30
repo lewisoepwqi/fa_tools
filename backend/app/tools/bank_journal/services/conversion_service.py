@@ -942,6 +942,7 @@ def list_conversion_runs(
             bank_template_version_id=run.bank_template_version_id,
             company_journal_template_version_id=run.company_journal_template_version_id,
             mapping_profile_version_id=run.mapping_profile_version_id,
+            error_message=run.error_message,
         )
         for run in runs
     ]
@@ -1016,4 +1017,5 @@ def get_conversion_run(db: Session, run_id: str) -> ConversionRunResponse:
         company_journal_template_version_id=run.company_journal_template_version_id,
         mapping_profile_version_id=run.mapping_profile_version_id,
         journal_columns=journal_cols,
+        error_message=run.error_message,
     )

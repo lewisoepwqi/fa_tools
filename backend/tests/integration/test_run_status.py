@@ -84,3 +84,50 @@ def test_create_pending_run_status_is_pending(client_with_db) -> None:
     run = conversion_service.create_pending_run(db, payload)
     assert run.status == "pending"
     db.rollback()  # 清理，不落库
+
+
+def _seed_failed_run(db, error: str):
+    """直接插一条 failed 状态的 ConversionRun（不走解析流程）。"""
+    import uuid
+
+    from app.tools.bank_journal.models.conversion import ConversionRun
+
+    run = ConversionRun(
+        id=str(uuid.uuid4()),
+        company_id="company-1",
+        bank_account_id="bank-account-1",
+        status="failed",
+        error_message=error,
+        summary_json={
+            "total_rows": 0,
+            "parse_failed_rows": 0,
+            "auto_confirmed_rows": 0,
+            "needs_confirmation_rows": 0,
+            "conflict_rows": 0,
+        },
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def test_failed_run_exposes_error_in_api(client_with_db, admin_auth) -> None:
+    """failed 批次的详情与列表响应都带 error_message。"""
+    c, db = client_with_db
+    run = _seed_failed_run(db, error="解析失败：列缺失")
+
+    detail = c.get(
+        f"/api/tools/bank-journal/conversion-runs/{run.id}",
+        headers=admin_auth,
+    ).json()
+    assert detail["status"] == "failed"
+    assert detail["error_message"] == "解析失败：列缺失"
+
+    listed = c.get(
+        "/api/tools/bank-journal/conversion-runs",
+        params={"company_id": run.company_id},
+        headers=admin_auth,
+    ).json()
+    item = next(i for i in listed["items"] if i["id"] == run.id)
+    assert item["error_message"] == "解析失败：列缺失"
