@@ -217,6 +217,9 @@ def _admin_auth_header() -> dict[str, str]:
 @pytest.fixture
 def client() -> Generator[TestClient, None, None]:
     engine = _create_test_engine()
+    # 持久库（PostgreSQL）下各测试共享同一数据库：先 drop 再 create 保证干净起步，
+    # 避免上一测试残留致 _seed_test_parents 重复播种冲突（SQLite 内存库为无害 no-op）。
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     test_session_local = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     _seed_test_parents(test_session_local)
@@ -248,6 +251,9 @@ def client_with_db() -> Generator[tuple[TestClient, Session], None, None]:
     on persisted rows (e.g., verifying no orphan BankTransaction rows exist).
     """
     engine = _create_test_engine()
+    # 持久库（PostgreSQL）下各测试共享同一数据库：先 drop 再 create 保证干净起步，
+    # 避免上一测试残留致 _seed_test_parents 重复播种冲突（SQLite 内存库为无害 no-op）。
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     test_session_local = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     _seed_test_parents(test_session_local)
