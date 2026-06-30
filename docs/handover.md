@@ -178,6 +178,8 @@ cd backend && alembic upgrade head
 ```
 
 > 完整约定见 `AGENTS.md`。
+>
+> 数据运维（PG 实测/JSON-JSONB/异步 rollout）见 `docs/data-ops-runbook.md`。
 
 ---
 
