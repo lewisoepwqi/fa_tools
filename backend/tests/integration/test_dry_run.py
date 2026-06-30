@@ -86,7 +86,7 @@ def test_dry_run_returns_preview_without_persisting(client, upload_dir) -> None:
 
     # 关键：试跑不落库——批次列表不应增长
     runs_after = client.get("/api/tools/bank-journal/conversion-runs").json()
-    assert len(runs_after) == len(runs_before)
+    assert len(runs_after["items"]) == len(runs_before["items"])
 
 
 def test_dry_run_respects_limit(client, upload_dir) -> None:

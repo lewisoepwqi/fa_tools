@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import admin, audit, auth, files
+from app.api.routes import admin, audit, auth, companies, files
 from app.core.config import get_settings
 from app.tools.bank_journal import register as register_bank_journal
 
@@ -20,6 +20,7 @@ app.add_middleware(
 app.include_router(admin.router)
 app.include_router(auth.router)
 app.include_router(audit.router)
+app.include_router(companies.router)
 app.include_router(files.router)
 # 工具：银行流水转公司日记账（新增工具时在此注册其 register 函数）。
 register_bank_journal(app)

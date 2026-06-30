@@ -102,7 +102,7 @@ def test_delete_bank_template_unreferenced(client) -> None:
 
     # 列表不再返回
     listed = client.get("/api/tools/bank-journal/bank-templates").json()
-    assert all(t["id"] != bank_id for t in listed)
+    assert all(t["id"] != bank_id for t in listed["items"])
 
 
 def test_delete_journal_template_unreferenced(client) -> None:
@@ -110,7 +110,7 @@ def test_delete_journal_template_unreferenced(client) -> None:
     response = client.delete(f"/api/tools/bank-journal/journal-templates/{journal_id}")
     assert response.status_code == 204
     listed = client.get("/api/tools/bank-journal/journal-templates").json()
-    assert all(t["id"] != journal_id for t in listed)
+    assert all(t["id"] != journal_id for t in listed["items"])
 
 
 def test_delete_rule_unreferenced(client) -> None:
@@ -118,7 +118,7 @@ def test_delete_rule_unreferenced(client) -> None:
     response = client.delete(f"/api/tools/bank-journal/rules/{rule_id}")
     assert response.status_code == 204
     listed = client.get("/api/tools/bank-journal/rules").json()
-    assert all(t["id"] != rule_id for t in listed)
+    assert all(t["id"] != rule_id for t in listed["items"])
 
 
 def test_delete_mapping_profile_unreferenced(client) -> None:
@@ -137,7 +137,7 @@ def test_delete_mapping_profile_unreferenced(client) -> None:
     response = client.delete(f"/api/tools/bank-journal/mapping-profiles/{profile_id}")
     assert response.status_code == 204
     listed = client.get("/api/tools/bank-journal/mapping-profiles").json()
-    assert all(t["id"] != profile_id for t in listed)
+    assert all(t["id"] != profile_id for t in listed["items"])
 
 
 # ---------------------------------------------------------------------------

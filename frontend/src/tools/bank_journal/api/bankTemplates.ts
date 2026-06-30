@@ -1,9 +1,11 @@
 import { apiClient } from '../../../api/client';
 import type { BankTemplate, BankTemplateVersion } from '../types/templates';
+import type { Page } from '../types/pagination';
 
-export async function listBankTemplates(companyId?: string): Promise<BankTemplate[]> {
-  const params = companyId ? { company_id: companyId } : undefined;
-  const response = await apiClient.get<BankTemplate[]>('/api/tools/bank-journal/bank-templates', { params });
+export async function listBankTemplates(
+  params?: { limit?: number; offset?: number; company_id?: string }
+): Promise<Page<BankTemplate>> {
+  const response = await apiClient.get<Page<BankTemplate>>('/api/tools/bank-journal/bank-templates', { params });
   return response.data;
 }
 

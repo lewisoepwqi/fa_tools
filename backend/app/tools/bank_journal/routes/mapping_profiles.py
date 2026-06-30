@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi import status as http_status
 from sqlalchemy import func
 
@@ -22,6 +22,7 @@ from app.tools.bank_journal.schemas.mapping import (
     MappingProfileVersionCreate,
     MappingProfileVersionResponse,
 )
+from app.tools.bank_journal.schemas.pagination import Page
 
 router = APIRouter(
     prefix="/api/tools/bank-journal/mapping-profiles", tags=["mapping-profiles"]
@@ -81,7 +82,7 @@ def create_mapping_profile(
 
 @router.get(
     "",
-    response_model=list[MappingProfileResponse],
+    response_model=Page[MappingProfileResponse],
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_mapping_profiles(
@@ -90,8 +91,10 @@ def list_mapping_profiles(
     company_id: str | None = None,
     bank_template_id: str | None = None,
     company_journal_template_id: str | None = None,
-) -> list[MappingProfileResponse]:
-    """列表。
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> Page[MappingProfileResponse]:
+    """列表（分页）。
 
     可选过滤：company_id / bank_template_id / company_journal_template_id。
     后两者用于模板详情页展示"被哪些映射方案引用"（解耦后的反向关联视图）。
@@ -111,9 +114,15 @@ def list_mapping_profiles(
         )
     # 软删除项不在列表/下拉中展示
     query = query.filter(MappingProfile.status != RecordStatus.DELETED.value)
-    parents = query.all()
+    total = query.count()
+    parents = (
+        query.order_by(MappingProfile.created_at.desc(), MappingProfile.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     if not parents:
-        return []
+        return Page[MappingProfileResponse](items=[], total=total, limit=limit, offset=offset)
     parent_ids = [p.id for p in parents]
     latest_no = (
         db.query(
@@ -134,7 +143,12 @@ def list_mapping_profiles(
         .all()
     )
     by_parent = {v.mapping_profile_id: v for v in versions}
-    return [_to_response(p, by_parent.get(p.id)) for p in parents]
+    return Page[MappingProfileResponse](
+        items=[_to_response(p, by_parent.get(p.id)) for p in parents],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(

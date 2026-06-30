@@ -268,9 +268,47 @@ cd backend && alembic upgrade head
 
 3. **`BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD`**：默认 `admin@example.com` / `changeme`。首次部署迁移后必须立即通过管理员接口改密，或在迁移前用环境变量设置强密码。
 
-4. **已知功能缺口（后续补）**：
+4. **已知功能缺口 → 已划入 W5**（见下方「W3 收尾结论」）：
    - 跨公司角色（admin/auditor）前端无法指定具体公司创建数据——缺 `GET /api/companies` 列表端点，前端公司选择器写死。
    - 模板/规则等的启用/停用 Switch 前端未做权限门控（processor/reviewer 也能看到开关，但点击会被后端拒绝，属技术债）。
+
+---
+
+### W5 收尾结论（2026-06-30 闭合，分支 `feat/w5-frontend`）
+
+W5 前端收口与分页完成，**后端 318 测试全绿 + ruff clean + 前端 `npm run build` exit 0**。经 12 任务 TDD + 逐任务复审 + opus 整分支最终复审 + 必修闭合。
+
+**重大现状修正**：开工探查发现 gap-analysis（2026-06-27）已严重过时——4 实体（银行模板/日记账模板/映射方案/规则）的**编辑=新版本（`POST /{id}/versions`）、版本历史、启停（`PATCH /{id}/status`）、规则 reorder、银行模板 detect 端点，及对应前端新建/编辑/版本历史/停用/删除 UI，连同 `*.modified`/`*.disabled`/`rule.priority_changed` 审计，均已在 W3 期落地**。W5 因此不重建编辑能力，收敛为 7 项真实剩余缺口。
+
+**W5 交付**：
+- 后端：批次 `summary` 增分状态计数（auto/needs/conflict）；`preview-rows` 端点加 `status` 过滤；4 实体 list + 批次 list 接 `Page[T]` 分页；新增平台共享 `GET /api/companies`（按可访问集收窄）；规则 reorder 审计按被改规则记 `company_id`（修跨公司丢归属）；规则列表改按最新版本 `priority` 升序。
+- 前端：`Page<T>` + 5 列表页服务端分页（切换公司重置页码）；批次详情改用 `preview-rows` 分页端点 + 统计取 `summary`（内联/独立两形态分支）；日记账按模板 `columns_json` 动态渲染列与编辑字段；规则列表 `@dnd-kit` 拖拽重排（offset 基准 priority）；公司选择器修复（admin/`'all'` 可选具体公司）；停用/删除按钮 + registry 菜单补权限门控。
+- handover §4 两项（`GET /api/companies` 公司选择器、启停 Switch 权限门控）**已在 W5 闭合**。
+
+**已知 follow-up（Minor，非阻塞，opus 复审记录）**：
+- **e2e 全缺**：纯前端交互（拖拽/公司选择/详情分页/动态列）仅 `npm run build` 门禁；本环境 WSL2 跑 e2e 超时（`tests/conversion-flow.spec.ts` 存在但需后端/启动慢）。建议有 CI/可跑 e2e 环境时优先补：① 规则拖拽→reorder→reload 顺序持久化；② admin 选具体公司后可创建。
+- 批次详情 `getConversionRun` 仍全量返回 `preview_rows`（分页只省了表格渲染、未省网络）；可后续提供剥离预览行的轻量 detail。
+- 动态列丢失「金额」右对齐（需后端 `columns_json` 携带列类型信息才能通用解决）；`templates` 菜单按 `template_manage` 门控会挡住只读角色从导航进入查看（spec §3.6 本意，如产品需要可降为 `read`）。
+- 预览行加载失败静默（无 `message.error`、`rowsTotal` 未归零）；`listCompanies` useEffect 缺 `AbortController` cleanup；规则 reorder 对 priority 未变规则仍写审计（预存行为）；`_extract_column_names` dict 分支无生产者（防御代码，键名约定臆测）。
+
+**跨工作流依赖**：**P0-2（批次快照已保存版本 ID）** 的版本机制已具备，但其实现落在转换管道（`conversion_service`），**归 W4**；preview-rows 异常码的跨页服务端过滤依赖 W4 的 JSON 查询可移植性方案。
+
+**W5 工作流自此闭合**，待提 PR 合并。
+
+---
+
+### W3 收尾结论（2026-06-29 闭合）
+
+W3 安全加固已随 **PR #13 合并到 main**，本次收尾盘点结论：
+
+- **验证全绿**：后端 `.venv/bin/pytest -q` → **303 passed**；lint → `.venv/bin/python -m ruff check .` → All checks passed（注：本环境 ruff 装在 `.venv` 里，用 `python -m ruff` 调用，PATH 上无独立 `ruff`）；前端 `npm run build` → exit 0（仅既有 AntD 单 chunk ~1.3MB 体积警告，属已记录技术债，非阻塞）。
+- **spec 残留核对**：W3 spec §6.2 注脚明确——`*.modified` / `*.disabled` / `rule.priority_changed` 审计事件依赖各自编辑端点，**W3 不强制补全**。这些编辑端点（gap P0-1 / P2-4）现已划归 **W5**，对应审计事件随 W5 一并补齐。W3 自身范围（鉴权 / RBAC / 租户隔离 / 字段加密 / SQLite FK pragma / 审计脱敏 + login/user.created/permission.changed）已全部落地。
+- **§4 两项功能缺口 → 推迟并入 W5**（决策依据：两项均为前端能力且依赖 W5 端点）：
+  1. `GET /api/companies` 列表端点 + 前端公司选择器去写死——与 W5「上传页配置选择器去写死」（gap §5 #3）同源，公司切换器需该 list 端点。归 W5。
+  2. 模板/规则启停 Switch 前端权限门控——依赖 W5 的 `PATCH /{id}/status` 端点 + 前端 RBAC 门控。归 W5。
+- **顺带发现（待 W5 brainstorm 校准）**：代码库已超出 `gap-analysis.md`（2026-06-27 生成）的描述，新增了「自定义字段」相关能力（`CustomFieldPage`、`BankTemplateWizard`、`useStandardFields`、custom-fields 端点等）。W5 开工前需重新核对 gap §5 前端缺口清单，避免按过时清单返工。
+
+**W3 工作流自此闭合**，剩余项去向如上，全部转入 W5 / W4。
 
 ---
 

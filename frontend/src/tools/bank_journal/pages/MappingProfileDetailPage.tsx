@@ -70,10 +70,10 @@ export function MappingProfileDetailPage() {
     if (!id) return;
     load(id);
     // 顺带加载模板名（用于展示绑定关系）
-    Promise.all([listBankTemplates(), listJournalTemplates()])
+    Promise.all([listBankTemplates({ limit: 500 }), listJournalTemplates({ limit: 500 })])
       .then(([b, j]) => {
-        setBankTemplates(b);
-        setJournalTemplates(j);
+        setBankTemplates(b.items);
+        setJournalTemplates(j.items);
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -169,9 +169,11 @@ export function MappingProfileDetailPage() {
             </Button>
           </Tooltip>
           <Button onClick={() => setHistoryOpen(true)}>版本历史</Button>
-          <Button onClick={handleToggleStatus}>
-            {data.status === 'active' ? '停用' : '启用'}
-          </Button>
+          <Tooltip title={!canManage ? '权限不足' : undefined}>
+            <Button onClick={handleToggleStatus} disabled={!canManage}>
+              {data.status === 'active' ? '停用' : '启用'}
+            </Button>
+          </Tooltip>
         </div>
         <Descriptions size="small" column={2} bordered>
           <Descriptions.Item label="方案ID">{data.id}</Descriptions.Item>

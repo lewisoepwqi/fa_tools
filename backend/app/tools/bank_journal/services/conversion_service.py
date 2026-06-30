@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -364,16 +365,31 @@ def run_conversion(
             pdata.status = PreviewStatus.NEEDS_CONFIRMATION
             preview_db_row.status = PreviewStatus.NEEDS_CONFIRMATION
 
+    status_counts: Counter[str] = Counter(p.status for p in preview_rows)
     run.summary_json = {
         "total_rows": len(preview_rows),
         "parse_failed_rows": parse_failed_count,
+        "auto_confirmed_rows": status_counts.get(PreviewStatus.AUTO_CONFIRMED, 0),
+        "needs_confirmation_rows": status_counts.get(PreviewStatus.NEEDS_CONFIRMATION, 0),
+        "conflict_rows": status_counts.get(PreviewStatus.CONFLICT, 0),
     }
     db.commit()
+
+    # 优先从绑定的日记账模板版本取列定义；无绑定则从本批预览行键并集回退。
+    journal_cols = _journal_columns_from_template(db, payload.company_journal_template_version_id)
+    if not journal_cols:
+        journal_cols = _journal_columns_from_rows_data(preview_rows)
 
     return ConversionRunResponse(
         id=run.id,
         status=run.status,
-        summary=ConversionRunSummary(total_rows=len(preview_rows)),
+        summary=ConversionRunSummary(
+            total_rows=len(preview_rows),
+            parse_failed_rows=parse_failed_count,
+            auto_confirmed_rows=status_counts.get(PreviewStatus.AUTO_CONFIRMED, 0),
+            needs_confirmation_rows=status_counts.get(PreviewStatus.NEEDS_CONFIRMATION, 0),
+            conflict_rows=status_counts.get(PreviewStatus.CONFLICT, 0),
+        ),
         preview_rows=preview_rows,
         company_id=run.company_id,
         bank_account_id=run.bank_account_id,
@@ -382,6 +398,7 @@ def run_conversion(
         bank_template_version_id=run.bank_template_version_id,
         company_journal_template_version_id=run.company_journal_template_version_id,
         mapping_profile_version_id=run.mapping_profile_version_id,
+        journal_columns=journal_cols,
     )
 
 
@@ -535,10 +552,14 @@ def dry_run_conversion(
             preview_rows.append(preview)
             row_index += 1
 
+    dry_status_counts: Counter[str] = Counter(p.status for p in preview_rows)
     return DryRunResponse(
         summary=ConversionRunSummary(
             total_rows=len(preview_rows),
             parse_failed_rows=parse_failed_count,
+            auto_confirmed_rows=dry_status_counts.get(PreviewStatus.AUTO_CONFIRMED, 0),
+            needs_confirmation_rows=dry_status_counts.get(PreviewStatus.NEEDS_CONFIRMATION, 0),
+            conflict_rows=dry_status_counts.get(PreviewStatus.CONFLICT, 0),
         ),
         preview_rows=preview_rows,
     )
@@ -748,10 +769,62 @@ def _build_bank_transaction(
     return BankTransaction(**kwargs)
 
 
+def _extract_column_names(columns_json: list) -> list[str]:
+    """从 columns_json 提取列名字符串。
+
+    支持两种存储格式：
+    - list[str]：直接作为列名（如 ["日期","摘要","科目","金额"]）。
+    - list[dict]：从 dict 的 name / label / col 键取列名。
+    """
+    names: list[str] = []
+    for col in columns_json:
+        if isinstance(col, str):
+            names.append(col)
+        elif isinstance(col, dict):
+            name = col.get("name") or col.get("label") or col.get("col")
+            if name:
+                names.append(str(name))
+    return names
+
+
+def _journal_columns_from_template(db: Session, version_id: str | None) -> list[str]:
+    """若绑定了日记账模板版本且该版本有 columns_json，返回列名列表；否则返回空列表。"""
+    if not version_id:
+        return []
+    v = db.get(CompanyJournalTemplateVersion, version_id)
+    if v is None or not v.columns_json:
+        return []
+    return _extract_column_names(v.columns_json)
+
+
+def _journal_columns_from_rows_data(rows: list[JournalPreviewRowData]) -> list[str]:
+    """从内存预览行的 output_values 键并集（首次出现顺序）提取列名，过滤 _ 前缀内部键。"""
+    seen: dict[str, None] = {}
+    for row in rows:
+        for key in row.output_values:
+            if not key.startswith("_"):
+                seen[key] = None
+    return list(seen.keys())
+
+
+def _journal_columns_from_rows_db(rows: list[JournalPreviewRow]) -> list[str]:
+    """从 DB 预览行的 output_values_json 键并集（首次出现顺序）提取列名，过滤 _ 前缀内部键。"""
+    seen: dict[str, None] = {}
+    for row in rows:
+        for key in (row.output_values_json or {}):
+            if not key.startswith("_"):
+                seen[key] = None
+    return list(seen.keys())
+
+
 def _summary_from_json(raw: dict[str, object] | None) -> ConversionRunSummary:
+    d = raw or {}
     return ConversionRunSummary(
-        total_rows=int(raw.get("total_rows", 0)) if raw else 0,
-        parse_failed_rows=int(raw.get("parse_failed_rows", 0)) if raw else 0,
+        total_rows=int(d.get("total_rows", 0)),
+        parse_failed_rows=int(d.get("parse_failed_rows", 0)),
+        auto_confirmed_rows=int(d.get("auto_confirmed_rows", 0)),
+        needs_confirmation_rows=int(d.get("needs_confirmation_rows", 0)),
+        conflict_rows=int(d.get("conflict_rows", 0)),
     )
 
 
@@ -759,19 +832,27 @@ def list_conversion_runs(
     db: Session,
     company_id: str | None = None,
     accessible: set[str] | None = None,
-) -> list[ConversionRunListItemResponse]:
-    """返回所有批次（不含预览行），按创建时间倒序。
+    limit: int = 100,
+    offset: int = 0,
+) -> Page[ConversionRunListItemResponse]:
+    """返回所有批次（不含预览行），按创建时间倒序，支持分页。
 
     accessible 为 None 表示跨公司角色（不过滤）；为集合时仅返回集合内公司的批次
     （空集合→ in_([])→空结果，符合最小权限原则）。
     """
-    query = db.query(ConversionRun)
+    base = db.query(ConversionRun)
     if company_id is not None:
-        query = query.filter(ConversionRun.company_id == company_id)
+        base = base.filter(ConversionRun.company_id == company_id)
     if accessible is not None:
-        query = query.filter(ConversionRun.company_id.in_(accessible))
-    runs = query.order_by(ConversionRun.created_at.desc()).all()
-    return [
+        base = base.filter(ConversionRun.company_id.in_(accessible))
+    total = base.count()
+    runs = (
+        base.order_by(ConversionRun.created_at.desc(), ConversionRun.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    items = [
         ConversionRunListItemResponse(
             id=run.id,
             company_id=run.company_id,
@@ -786,6 +867,7 @@ def list_conversion_runs(
         )
         for run in runs
     ]
+    return Page(items=items, total=total, limit=limit, offset=offset)
 
 
 def _preview_row_to_data(row: JournalPreviewRow) -> JournalPreviewRowData:
@@ -801,10 +883,12 @@ def _preview_row_to_data(row: JournalPreviewRow) -> JournalPreviewRowData:
 
 
 def list_preview_rows(
-    db: Session, run_id: str, limit: int, offset: int
+    db: Session, run_id: str, limit: int, offset: int, status: str | None = None
 ) -> Page[JournalPreviewRowData]:
-    """分页返回某批次的日记账预览行，按 row_index 升序。"""
+    """分页返回某批次的日记账预览行，按 row_index 升序。status 非 None 时按状态过滤。"""
     base = db.query(JournalPreviewRow).filter(JournalPreviewRow.conversion_run_id == run_id)
+    if status:
+        base = base.filter(JournalPreviewRow.status == status)
     total = base.count()
     rows = base.order_by(JournalPreviewRow.row_index).offset(offset).limit(limit).all()
     return Page[JournalPreviewRowData](
@@ -836,6 +920,11 @@ def get_conversion_run(db: Session, run_id: str) -> ConversionRunResponse:
         .order_by(JournalPreviewRow.row_index.asc())
         .all()
     )
+    # 优先从绑定的日记账模板版本取列定义；无绑定则从持久化预览行键并集回退。
+    journal_cols = _journal_columns_from_template(db, run.company_journal_template_version_id)
+    if not journal_cols:
+        journal_cols = _journal_columns_from_rows_db(rows)
+
     return ConversionRunResponse(
         id=run.id,
         status=run.status,
@@ -848,4 +937,5 @@ def get_conversion_run(db: Session, run_id: str) -> ConversionRunResponse:
         bank_template_version_id=run.bank_template_version_id,
         company_journal_template_version_id=run.company_journal_template_version_id,
         mapping_profile_version_id=run.mapping_profile_version_id,
+        journal_columns=journal_cols,
     )

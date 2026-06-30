@@ -13,6 +13,7 @@ from app.tools.bank_journal.models.template import (
     CompanyJournalTemplate,
     CompanyJournalTemplateVersion,
 )
+from app.tools.bank_journal.schemas.pagination import Page
 from app.tools.bank_journal.schemas.template import (
     BankTemplateCreate,
     BankTemplateResponse,
@@ -66,7 +67,9 @@ def list_bank_templates(
     db: Session,
     company_id: str | None = None,
     accessible: set[str] | None = None,
-) -> list[BankTemplateResponse]:
+    limit: int = 100,
+    offset: int = 0,
+) -> Page[BankTemplateResponse]:
     query = db.query(BankTemplate)
     if company_id is not None:
         query = query.filter(BankTemplate.company_id == company_id)
@@ -76,9 +79,15 @@ def list_bank_templates(
         query = query.filter(BankTemplate.company_id.in_(accessible))
     # 软删除项不在列表/下拉中展示（删除仅置 status=deleted，行与版本保留）
     query = query.filter(BankTemplate.status != RecordStatus.DELETED.value)
-    parents = query.all()
+    total = query.count()
+    parents = (
+        query.order_by(BankTemplate.created_at.desc(), BankTemplate.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     if not parents:
-        return []
+        return Page[BankTemplateResponse](items=[], total=total, limit=limit, offset=offset)
     parent_ids = [p.id for p in parents]
     latest_no = (
         db.query(
@@ -99,7 +108,12 @@ def list_bank_templates(
         .all()
     )
     by_parent = {v.bank_template_id: v for v in versions}
-    return [_bank_template_to_response(p, by_parent.get(p.id)) for p in parents]
+    return Page[BankTemplateResponse](
+        items=[_bank_template_to_response(p, by_parent.get(p.id)) for p in parents],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 def get_bank_template(db: Session, template_id: str) -> BankTemplateResponse:
@@ -241,7 +255,9 @@ def list_journal_templates(
     db: Session,
     company_id: str | None = None,
     accessible: set[str] | None = None,
-) -> list[CompanyJournalTemplateResponse]:
+    limit: int = 100,
+    offset: int = 0,
+) -> Page[CompanyJournalTemplateResponse]:
     query = db.query(CompanyJournalTemplate)
     if company_id is not None:
         query = query.filter(CompanyJournalTemplate.company_id == company_id)
@@ -250,9 +266,17 @@ def list_journal_templates(
         query = query.filter(CompanyJournalTemplate.company_id.in_(accessible))
     # 软删除项不在列表/下拉中展示
     query = query.filter(CompanyJournalTemplate.status != RecordStatus.DELETED.value)
-    parents = query.all()
+    total = query.count()
+    parents = (
+        query.order_by(CompanyJournalTemplate.created_at.desc(), CompanyJournalTemplate.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     if not parents:
-        return []
+        return Page[CompanyJournalTemplateResponse](
+            items=[], total=total, limit=limit, offset=offset
+        )
     parent_ids = [p.id for p in parents]
     latest_no = (
         db.query(
@@ -273,7 +297,12 @@ def list_journal_templates(
         .all()
     )
     by_parent = {v.company_journal_template_id: v for v in versions}
-    return [_journal_template_to_response(p, by_parent.get(p.id)) for p in parents]
+    return Page[CompanyJournalTemplateResponse](
+        items=[_journal_template_to_response(p, by_parent.get(p.id)) for p in parents],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 def get_journal_template(

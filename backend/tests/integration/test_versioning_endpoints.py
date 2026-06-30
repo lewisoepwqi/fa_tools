@@ -8,6 +8,7 @@
 - 审计记录 modified / disabled / enabled / priority_changed
 """
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # 银行模板：新版本 + 版本历史 + 停用
@@ -293,3 +294,62 @@ def test_rule_reorder_404_for_unknown_rule(client) -> None:
         json={"items": [{"rule_id": "no-such-rule", "priority": 1}]},
     )
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 规则 reorder 审计公司归属修复（W5 Task 6）
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def seed_two_rules_same_company(client):
+    """创建两条同公司规则，返回 (rule_a_id, rule_b_id, company_id)。"""
+    rule_a = _create_rule(client, name="重排规则A", priority=10)
+    rule_b = _create_rule(client, name="重排规则B", priority=20)
+    return rule_a["id"], rule_b["id"], "company-1"
+
+
+def test_reorder_audit_records_company(client, seed_two_rules_same_company) -> None:
+    """reorder 审计事件 company_id 应等于被重排规则的公司，而非 None。"""
+    rule_a_id, rule_b_id, company_id = seed_two_rules_same_company
+    resp = client.post(
+        "/api/tools/bank-journal/rules/reorder",
+        json={
+            "items": [
+                {"rule_id": rule_a_id, "priority": 5},
+                {"rule_id": rule_b_id, "priority": 1},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    # audit-logs 不支持 action 过滤，取全部后在 Python 层筛选
+    logs = client.get("/api/audit-logs").json()["items"]
+    priority_changed = [log for log in logs if log["action"] == "rule.priority_changed"]
+    assert priority_changed, "未找到 rule.priority_changed 审计条目"
+    bad = [log["company_id"] for log in priority_changed if log["company_id"] != company_id]
+    assert not bad, f"审计条目 company_id 应为 {company_id!r}，实际含异常值: {bad}"
+
+
+# ---------------------------------------------------------------------------
+# 规则列表按最新版本 priority 升序（spec §3.4）
+# ---------------------------------------------------------------------------
+
+
+def test_list_rules_ordered_by_priority_asc(client) -> None:
+    """列表接口应按最新版本 priority 升序返回规则（NULL 排最后，次级键 id）。"""
+    # 创建 priority 顺序：3、1、2 → 预期列表顺序：1、2、3
+    rule_c = _create_rule(client, name="规则C", priority=3)
+    rule_a = _create_rule(client, name="规则A", priority=1)
+    rule_b = _create_rule(client, name="规则B", priority=2)
+
+    resp = client.get(
+        "/api/tools/bank-journal/rules",
+        params={"company_id": "company-1", "limit": 10, "offset": 0},
+    )
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    # 只取本次创建的 3 条（按 id 匹配）
+    ids_created = {rule_a["id"], rule_b["id"], rule_c["id"]}
+    ordered = [it for it in items if it["id"] in ids_created]
+    priorities = [it["latest_version"]["priority"] for it in ordered]
+    assert priorities == [1, 2, 3], f"期望按 priority 升序 [1,2,3]，实际: {priorities}"

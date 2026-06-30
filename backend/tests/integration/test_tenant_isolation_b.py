@@ -153,7 +153,7 @@ def test_bank_templates_scoped(client_with_db, make_user, auth_headers):
         "/api/tools/bank-journal/bank-templates", headers=auth_headers(user)
     )
     assert r.status_code == 200
-    companies = {item["company_id"] for item in r.json()}
+    companies = {item["company_id"] for item in r.json()["items"]}
     assert companies == {"co-A"}
 
 
@@ -166,7 +166,7 @@ def test_bank_templates_admin_sees_all(client_with_db, make_user, auth_headers):
         "/api/tools/bank-journal/bank-templates", headers=auth_headers(user)
     )
     assert r.status_code == 200
-    companies = {item["company_id"] for item in r.json()}
+    companies = {item["company_id"] for item in r.json()["items"]}
     assert {"co-A", "co-B"} <= companies
 
 
@@ -179,7 +179,7 @@ def test_journal_templates_scoped(client_with_db, make_user, auth_headers):
         "/api/tools/bank-journal/journal-templates", headers=auth_headers(user)
     )
     assert r.status_code == 200
-    companies = {item["company_id"] for item in r.json()}
+    companies = {item["company_id"] for item in r.json()["items"]}
     assert companies == {"co-A"}
 
 
@@ -192,7 +192,7 @@ def test_mapping_profiles_scoped(client_with_db, make_user, auth_headers):
         "/api/tools/bank-journal/mapping-profiles", headers=auth_headers(user)
     )
     assert r.status_code == 200
-    companies = {item["company_id"] for item in r.json()}
+    companies = {item["company_id"] for item in r.json()["items"]}
     assert companies == {"co-A"}
 
 
@@ -205,7 +205,7 @@ def test_mapping_profiles_admin_sees_all(client_with_db, make_user, auth_headers
         "/api/tools/bank-journal/mapping-profiles", headers=auth_headers(user)
     )
     assert r.status_code == 200
-    companies = {item["company_id"] for item in r.json()}
+    companies = {item["company_id"] for item in r.json()["items"]}
     assert {"co-A", "co-B"} <= companies
 
 
@@ -216,7 +216,7 @@ def test_rules_scoped(client_with_db, make_user, auth_headers):
     user = make_user(db, roles=["template_admin"], company_ids=["co-A"])
     r = c.get("/api/tools/bank-journal/rules", headers=auth_headers(user))
     assert r.status_code == 200
-    companies = {item["company_id"] for item in r.json()}
+    companies = {item["company_id"] for item in r.json()["items"]}
     assert companies == {"co-A"}
 
 
@@ -227,7 +227,7 @@ def test_rules_admin_sees_all(client_with_db, make_user, auth_headers):
     user = make_user(db, roles=["admin"])
     r = c.get("/api/tools/bank-journal/rules", headers=auth_headers(user))
     assert r.status_code == 200
-    companies = {item["company_id"] for item in r.json()}
+    companies = {item["company_id"] for item in r.json()["items"]}
     assert {"co-A", "co-B"} <= companies
 
 
@@ -481,7 +481,7 @@ def test_journal_templates_admin_sees_all(client_with_db, make_user, auth_header
         "/api/tools/bank-journal/journal-templates", headers=auth_headers(user)
     )
     assert r.status_code == 200
-    companies = {item["company_id"] for item in r.json()}
+    companies = {item["company_id"] for item in r.json()["items"]}
     assert {"co-A", "co-B"} <= companies
 
 

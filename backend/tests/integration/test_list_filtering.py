@@ -105,7 +105,7 @@ def test_list_mappings_filter_by_bank_template(client) -> None:
     listed = client.get(
         "/api/tools/bank-journal/mapping-profiles", params={"bank_template_id": bank_a}
     ).json()
-    assert [m["id"] for m in listed] == [m1]
+    assert [m["id"] for m in listed["items"]] == [m1]
 
 
 def test_list_mappings_filter_by_journal_template(client) -> None:
@@ -123,7 +123,7 @@ def test_list_mappings_filter_by_journal_template(client) -> None:
         "/api/tools/bank-journal/mapping-profiles",
         params={"company_journal_template_id": journal_a},
     ).json()
-    assert [m["id"] for m in listed] == [m1]
+    assert [m["id"] for m in listed["items"]] == [m1]
 
 
 def test_list_mappings_filter_excludes_unbound(client) -> None:
@@ -136,7 +136,7 @@ def test_list_mappings_filter_excludes_unbound(client) -> None:
     listed = client.get(
         "/api/tools/bank-journal/mapping-profiles", params={"bank_template_id": bank}
     ).json()
-    assert [m["id"] for m in listed] == [bound]
+    assert [m["id"] for m in listed["items"]] == [bound]
 
 
 def test_list_mappings_no_filter_returns_all(client) -> None:
@@ -149,7 +149,7 @@ def test_list_mappings_no_filter_returns_all(client) -> None:
     unbound = _create_mapping(client, name="未绑定")
 
     listed = client.get("/api/tools/bank-journal/mapping-profiles").json()
-    listed_ids = {m["id"] for m in listed}
+    listed_ids = {m["id"] for m in listed["items"]}
     # 测试夹具预置了 mp-1；本测试另建 2 条，共 ≥ 2 条；仅断言本测试创建的都在列表中
     assert {bound, unbound} <= listed_ids
 
@@ -168,7 +168,7 @@ def test_list_rules_filter_by_scope(client) -> None:
         "/api/tools/bank-journal/rules",
         params={"scope_type": "bank_template", "scope_id": bank_id},
     ).json()
-    assert [r["id"] for r in listed] == [r1]
+    assert [r["id"] for r in listed["items"]] == [r1]
 
 
 def test_list_rules_no_filter_returns_all(client) -> None:
@@ -177,7 +177,7 @@ def test_list_rules_no_filter_returns_all(client) -> None:
     r2 = _create_rule(client, name="全局规则")
 
     listed = client.get("/api/tools/bank-journal/rules").json()
-    listed_ids = {r["id"] for r in listed}
+    listed_ids = {r["id"] for r in listed["items"]}
     # 测试夹具预置了 rule-1/r1/rule-auto；本测试另建 2 条；仅断言本测试创建的都在列表中
     assert {r1, r2} <= listed_ids
 
@@ -203,5 +203,5 @@ def test_list_bank_templates_reflects_latest_version(client) -> None:
         },
     )
     listed = client.get("/api/tools/bank-journal/bank-templates").json()
-    match = next(m for m in listed if m["id"] == tmpl_id)
+    match = next(m for m in listed["items"] if m["id"] == tmpl_id)
     assert match["latest_version"]["version_no"] == 2

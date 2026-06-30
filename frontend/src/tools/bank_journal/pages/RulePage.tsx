@@ -1,11 +1,21 @@
-import { PlusOutlined } from '@ant-design/icons';
+import { HolderOutlined, PlusOutlined } from '@ant-design/icons';
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { Button, Input, InputNumber, Modal, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
-import { createRule, deleteRule, listRules, setRuleStatus } from '../api/rules';
+import { createRule, deleteRule, listRules, reorderRules, setRuleStatus } from '../api/rules';
 import {
   RuleEditor,
   ruleDataToBackend,
@@ -14,12 +24,104 @@ import {
 import { VersionBadge } from '../components/VersionBadge';
 import type { Rule } from '../types/rules';
 
+// 从 useSortable 推断拖拽监听器类型，避免依赖 @dnd-kit 私有路径
+type SyntheticListenerMap = NonNullable<ReturnType<typeof useSortable>['listeners']>;
+
 const EMPTY_RULE: RuleEditorData = { logic: 'all', conditions: [], actions: [] };
+
+// ---- 拖拽手柄 Context（从行传给手柄列）----
+
+interface DragHandleContextValue {
+  setActivatorNodeRef?: (el: HTMLElement | null) => void;
+  listeners?: SyntheticListenerMap;
+  canDrag: boolean;
+}
+
+const DragHandleCtx = createContext<DragHandleContextValue>({ canDrag: false });
+
+// ---- 可拖拽的表格行 ----
+
+interface SortableRowProps extends React.HTMLAttributes<HTMLTableRowElement> {
+  'data-row-key'?: string;
+  canDrag: boolean;
+}
+
+function SortableRow({ canDrag, children, ...props }: SortableRowProps) {
+  const id = props['data-row-key'] ?? '';
+  const {
+    setNodeRef,
+    setActivatorNodeRef,
+    listeners,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled: !canDrag });
+
+  const style: React.CSSProperties = {
+    ...props.style,
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const ctxValue = useMemo(
+    () => ({ setActivatorNodeRef, listeners, canDrag }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [setActivatorNodeRef, listeners, canDrag]
+  );
+
+  return (
+    <DragHandleCtx.Provider value={ctxValue}>
+      <tr {...props} ref={setNodeRef} style={style}>
+        {children}
+      </tr>
+    </DragHandleCtx.Provider>
+  );
+}
+
+// ---- 拖拽手柄图标（在手柄列渲染）----
+
+function DragHandle() {
+  const { setActivatorNodeRef, listeners, canDrag } = useContext(DragHandleCtx);
+
+  if (!canDrag) {
+    return (
+      <Tooltip title="权限不足">
+        <HolderOutlined style={{ color: '#d9d9d9', cursor: 'not-allowed', fontSize: 16 }} />
+      </Tooltip>
+    );
+  }
+
+  return (
+    <span
+      ref={setActivatorNodeRef as ((el: HTMLSpanElement | null) => void) | undefined}
+      {...listeners}
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        color: '#bfbfbf',
+        cursor: 'grab',
+        fontSize: 16,
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '0 4px',
+        userSelect: 'none',
+      }}
+      title="拖拽调整优先级"
+    >
+      <HolderOutlined />
+    </span>
+  );
+}
+
+// ---- 主页面 ----
 
 export function RulePage() {
   const { currentCompanyId, hasPermission } = useAuth();
   const canManage = hasPermission('template_manage');
-  const [rows, setRows] = useState<Rule[]>([]);
+  const [items, setItems] = useState<Rule[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -31,21 +133,32 @@ export function RulePage() {
 
   const load = () => {
     setLoading(true);
-    listRules()
-      .then(setRows)
-      .catch(() => setRows([]))
+    listRules({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => { setItems(p.items ?? []); setTotal(p.total ?? 0); })
+      .catch(() => { setItems([]); setTotal(0); })
       .finally(() => setLoading(false));
   };
+
+  // 切换公司时重置页码，避免旧 offset 查新公司导致空表
+  useEffect(() => { setPage(1); }, [currentCompanyId]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    listRules()
-      .then((data) => {
-        if (active) setRows(data);
+    listRules({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => {
+        if (active) { setItems(p.items ?? []); setTotal(p.total ?? 0); }
       })
       .catch(() => {
-        if (active) setRows([]);
+        if (active) setItems([]);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -53,7 +166,7 @@ export function RulePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [page, pageSize, currentCompanyId]);
 
   const openCreate = () => {
     setName('');
@@ -120,7 +233,38 @@ export function RulePage() {
     }
   };
 
+  // dnd-kit sensors：需拖动 5px 才激活，防止误触点击
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  );
+
+  const handleDragEnd = async ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = items.findIndex((r) => r.id === active.id);
+    const newIndex = items.findIndex((r) => r.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const snapshot = items; // 快照，失败时用于回滚
+    const next = arrayMove(items, oldIndex, newIndex);
+    setItems(next); // 乐观更新
+
+    try {
+      await reorderRules(next.map((r, i) => ({ rule_id: r.id, priority: (page - 1) * pageSize + i + 1 })));
+      message.success('优先级已更新');
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '排序保存失败，已还原');
+      setItems(snapshot); // 回滚到拖拽前快照
+    }
+  };
+
   const columns: ColumnsType<Rule> = [
+    {
+      title: '',
+      key: 'drag',
+      width: 40,
+      render: () => <DragHandle />,
+    },
     { title: '名称', dataIndex: 'name', key: 'name' },
     {
       title: '优先级',
@@ -138,11 +282,14 @@ export function RulePage() {
       key: 'status',
       width: 80,
       render: (_, r) => (
-        <Switch
-          size="small"
-          checked={r.status === 'active'}
-          onChange={(checked) => handleToggleStatus(r.id, checked ? 'active' : 'inactive')}
-        />
+        <Tooltip title={!canManage ? '权限不足' : undefined}>
+          <Switch
+            size="small"
+            checked={r.status === 'active'}
+            disabled={!canManage}
+            onChange={(checked) => handleToggleStatus(r.id, checked ? 'active' : 'inactive')}
+          />
+        </Tooltip>
       )
     },
     {
@@ -176,26 +323,40 @@ export function RulePage() {
           >
             详情
           </Button>
-          <Popconfirm
-            title="确定删除该规则？"
-            description="被转换批次引用的规则无法删除。"
-            okText="删除"
-            okButtonProps={{ danger: true }}
-            cancelText="取消"
-            onConfirm={(e) => {
-              e?.stopPropagation();
-              handleDelete(r.id);
-            }}
-            onCancel={(e) => e?.stopPropagation()}
-          >
-            <Button size="small" type="link" danger onClick={(e) => e.stopPropagation()}>
-              删除
-            </Button>
-          </Popconfirm>
+          <Tooltip title={!canManage ? '权限不足' : undefined}>
+            <Popconfirm
+              title="确定删除该规则？"
+              description="被转换批次引用的规则无法删除。"
+              okText="删除"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              disabled={!canManage}
+              onConfirm={(e) => {
+                e?.stopPropagation();
+                handleDelete(r.id);
+              }}
+              onCancel={(e) => e?.stopPropagation()}
+            >
+              <Button size="small" type="link" danger disabled={!canManage} onClick={(e) => e.stopPropagation()}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Tooltip>
         </Space>
       )
     }
   ];
+
+  // antd Table 的自定义行渲染：注入 canManage 到 SortableRow
+  const tableComponents = useMemo(() => ({
+    body: {
+      row: ({ children, ...rowProps }: React.HTMLAttributes<HTMLTableRowElement> & { 'data-row-key'?: string }) => (
+        <SortableRow canDrag={canManage} {...rowProps}>
+          {children}
+        </SortableRow>
+      ),
+    },
+  }), [canManage]);
 
   return (
     <div>
@@ -218,17 +379,30 @@ export function RulePage() {
           </Button>
         </Tooltip>
       </div>
-      <Table<Rule>
-        rowKey="id"
-        columns={columns}
-        dataSource={rows}
-        loading={loading}
-        pagination={false}
-        onRow={(record) => ({
-          onClick: () => navigate(`/bank-journal/templates/rule/${record.id}`),
-          style: { cursor: 'pointer' }
-        })}
-      />
+
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={items.map((r) => r.id)} strategy={verticalListSortingStrategy}>
+          <Table<Rule>
+            rowKey="id"
+            columns={columns}
+            dataSource={items}
+            loading={loading}
+            components={tableComponents}
+            pagination={{
+              current: page,
+              pageSize,
+              total,
+              showSizeChanger: true,
+              showTotal: (t) => `共 ${t} 条`,
+              onChange: (p, ps) => { setPage(p); setPageSize(ps); }
+            }}
+            onRow={(record) => ({
+              onClick: () => navigate(`/bank-journal/templates/rule/${record.id}`),
+              style: { cursor: 'pointer' }
+            })}
+          />
+        </SortableContext>
+      </DndContext>
 
       <Modal
         open={modalOpen}

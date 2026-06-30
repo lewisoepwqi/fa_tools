@@ -113,14 +113,20 @@ def dry_run(
 
 @router.get(
     "",
-    response_model=list[ConversionRunListItemResponse],
+    response_model=Page[ConversionRunListItemResponse],
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_runs(
-    db: DbSession, user: CurrentUserDep, company_id: str | None = None
-) -> list[ConversionRunListItemResponse]:
-    """批次列表（不含预览行），按创建时间倒序。仅返回当前用户可访问公司的批次。"""
-    return list_conversion_runs(db, company_id, accessible_company_filter(user))
+    db: DbSession,
+    user: CurrentUserDep,
+    company_id: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> Page[ConversionRunListItemResponse]:
+    """批次列表（不含预览行），按创建时间倒序，支持分页。仅返回当前用户可访问公司的批次。"""
+    return list_conversion_runs(
+        db, company_id, accessible_company_filter(user), limit=limit, offset=offset
+    )
 
 
 @router.get(
@@ -146,8 +152,10 @@ def list_run_preview_rows(
     run_id: str,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    row_status: str | None = Query(None, alias="status"),
 ) -> Page[JournalPreviewRowData]:
-    """分页返回某批次的日记账预览行，按 row_index 升序。不存在则 404，无权则 403。"""
+    """分页返回某批次的日记账预览行，按 row_index 升序。不存在则 404，无权则 403。
+    可选 status 查询参数按状态过滤，total 反映过滤后总数。"""
     # 轻量加载父批次以取 company_id（存在性检查先于公司访问检查）
     run = db.get(ConversionRun, run_id)
     if run is None:
@@ -156,4 +164,4 @@ def list_run_preview_rows(
             detail=f"Conversion run not found: {run_id}",
         )
     require_company_access(user, run.company_id)
-    return list_preview_rows(db, run_id, limit, offset)
+    return list_preview_rows(db, run_id, limit, offset, row_status)

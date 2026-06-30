@@ -267,7 +267,7 @@ def test_list_bank_templates_returns_persisted_template(client) -> None:
         },
     ).json()
     listed = client.get("/api/tools/bank-journal/bank-templates").json()
-    created_in_list = next(t for t in listed if t["id"] == create["id"])
+    created_in_list = next(t for t in listed["items"] if t["id"] == create["id"])
     # 新建模板只有 1 个版本；version_no 应为 1
     assert created_in_list["latest_version"]["version_no"] == 1
 
@@ -885,3 +885,357 @@ def test_balance_discontinuity_flagged(client, upload_dir) -> None:
     assert "BALANCE_DISCONTINUITY" not in codes_row0, "首行不应标注余额跳变"
     assert "BALANCE_DISCONTINUITY" in codes_row1, "第二行余额跳变应被标注"
     assert "BALANCE_DISCONTINUITY" not in codes_row2, "第三行余额连续不应标注"
+
+
+@pytest.fixture()
+def seed_run_with_mixed_statuses(client, upload_dir):
+    """创建含混合状态预览行的批次（auto_confirmed / needs_confirmation / conflict 各 1 行）。
+
+    三行 CSV + 三条规则：
+    - 行1 摘要="货款"  → 命中规则1（allow_auto_confirm=True）→ AUTO_CONFIRMED
+    - 行2 摘要="其他"  → 无规则命中 → NEEDS_CONFIRMATION（NO_RULE_MATCH）
+    - 行3 摘要="冲突"  → 命中规则2/3，outputs 不一致 → CONFLICT
+
+    余额按连续性设置，避免 BALANCE_DISCONTINUITY 干扰 AUTO_CONFIRMED 行。
+    """
+    csv_bytes = (
+        "交易日期,入账日期,收入,支出,余额,对方户名,对方账号,摘要,用途,流水号\n"
+        "2026-01-01,,100.00,,1100.00,甲公司,ACC001,货款,测试,TXN-MX1\n"
+        "2026-01-02,,200.00,,1300.00,乙公司,ACC002,其他,测试,TXN-MX2\n"
+        "2026-01-03,,300.00,,1600.00,丙公司,ACC003,冲突,测试,TXN-MX3\n"
+    ).encode()
+
+    upload = client.post(
+        "/api/files/upload",
+        files={"file": ("mixed_status.csv", csv_bytes, "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+    ).json()
+
+    run = client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "入账日期": "posting_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "对方户名": "counterparty_name",
+                    "对方账号": "counterparty_account_no",
+                    "摘要": "summary",
+                    "用途": "purpose",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [],
+            "rules": [
+                {
+                    "id": "rule-1",
+                    "version_id": "rule-version-1",
+                    "priority": 10,
+                    "conditions": {
+                        "all": [{"field": "summary", "op": "contains", "value": "货款"}]
+                    },
+                    "actions": [{"field": "journal_summary", "value": "货款收入"}],
+                    "allow_auto_confirm": True,
+                },
+                {
+                    "id": "r1",
+                    "version_id": "rv1",
+                    "priority": 20,
+                    "conditions": {
+                        "all": [{"field": "summary", "op": "contains", "value": "冲突"}]
+                    },
+                    "actions": [{"field": "journal_summary", "value": "科目A"}],
+                    "allow_auto_confirm": False,
+                },
+                {
+                    "id": "rule-auto",
+                    "version_id": "rule-version-auto",
+                    "priority": 30,
+                    "conditions": {
+                        "all": [{"field": "summary", "op": "contains", "value": "冲突"}]
+                    },
+                    "actions": [{"field": "journal_summary", "value": "科目B"}],
+                    "allow_auto_confirm": False,
+                },
+            ],
+            "required_columns": [],
+        },
+    ).json()
+
+    return run["id"]
+
+
+def test_run_summary_carries_status_counts(client, seed_run_with_mixed_statuses) -> None:
+    """批次详情 summary 应包含分状态计数，支撑前端统计面板在分页加载时正确显示。"""
+    run_id = seed_run_with_mixed_statuses
+    resp = client.get(f"/api/tools/bank-journal/conversion-runs/{run_id}")
+    assert resp.status_code == 200
+    summary = resp.json()["summary"]
+    assert summary["auto_confirmed_rows"] >= 1
+    assert summary["needs_confirmation_rows"] >= 1
+    assert summary["conflict_rows"] >= 1
+    # 总行数应与各分类计数之和一致（含未分类状态的容错）
+    counted = (
+        summary["auto_confirmed_rows"]
+        + summary["needs_confirmation_rows"]
+        + summary["conflict_rows"]
+        + summary["parse_failed_rows"]
+    )
+    assert counted <= summary["total_rows"]
+
+
+def test_preview_rows_filter_by_status(client, seed_run_with_mixed_statuses):
+    """preview-rows 端点支持 status 过滤，返回结果应只含指定状态行，total 反映过滤后总数。"""
+    run_id = seed_run_with_mixed_statuses
+    resp = client.get(
+        f"/api/tools/bank-journal/conversion-runs/{run_id}/preview-rows",
+        params={"status": "needs_confirmation", "limit": 500},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] >= 1
+    assert all(r["status"] == "needs_confirmation" for r in body["items"])
+
+
+# ---------------------------------------------------------------------------
+# W5-T4：批次列表分页
+# ---------------------------------------------------------------------------
+
+_MINIMAL_CSV = (
+    "交易日期,收入,支出,余额,摘要,流水号\n"
+    "2026-01-01,100.00,,1100.00,货款,TXN-SEED-{i}\n"
+).encode()
+
+_MINIMAL_PAYLOAD = {
+    "company_id": "company-1",
+    "bank_account_id": "bank-account-1",
+    "bank_parse_config": {
+        "file_type": "csv",
+        "sheet_name": "Sheet1",
+        "header_row_index": 0,
+        "data_start_row_index": 1,
+        "field_aliases": {
+            "交易日期": "transaction_date",
+            "收入": "income_amount",
+            "支出": "expense_amount",
+            "余额": "balance",
+            "摘要": "summary",
+            "流水号": "bank_transaction_id",
+        },
+        "amount_mode": "income_expense_columns",
+        "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+        "date_formats": ["%Y-%m-%d"],
+    },
+    "mappings": [],
+    "rules": [],
+    "required_columns": [],
+}
+
+
+@pytest.fixture()
+def seed_runs(client, upload_dir):
+    """工厂夹具：快速创建 N 条最小批次，返回 run id 列表。"""
+    def _seed(n: int) -> list[str]:
+        ids = []
+        for i in range(n):
+            csv_bytes = (
+                "交易日期,收入,支出,余额,摘要,流水号\n"
+                f"2026-01-01,100.00,,1100.00,货款,TXN-SEED-{i}\n"
+            ).encode()
+            upload = client.post(
+                "/api/files/upload",
+                files={"file": (f"seed_{i}.csv", csv_bytes, "text/csv")},
+                data={"company_id": "company-1", "uploaded_by": "user-1"},
+            ).json()
+            payload = dict(_MINIMAL_PAYLOAD)
+            payload["source_file_ids"] = [upload["id"]]
+            run = client.post(
+                "/api/tools/bank-journal/conversion-runs",
+                json=payload,
+            ).json()
+            ids.append(run["id"])
+        return ids
+
+    return _seed
+
+
+def test_conversion_runs_list_paginated(client, seed_runs):
+    """批次列表端点返回 Page 分页信封，limit 截断生效。"""
+    seed_runs(3)
+    resp = client.get(
+        "/api/tools/bank-journal/conversion-runs",
+        params={"limit": 2, "offset": 0},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) >= {"items", "total", "limit", "offset"}
+    assert len(body["items"]) == 2 and body["total"] >= 3
+
+
+# ---------------------------------------------------------------------------
+# Task 9：journal_columns 动态列
+# ---------------------------------------------------------------------------
+
+def test_run_response_exposes_journal_columns_from_template(
+    client_with_db, admin_auth, tmp_path
+) -> None:
+    """绑定日记账模板版本时，GET 批次响应应携带 journal_columns = 模板 columns_json。"""
+    import os
+
+    from app.core.config import get_settings
+    from app.tools.bank_journal.models.template import CompanyJournalTemplateVersion
+
+    test_client, db = client_with_db
+    uploads = tmp_path / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    get_settings.cache_clear()
+    os.environ["UPLOAD_DIR"] = str(uploads)
+    get_settings.cache_clear()
+
+    expected_cols = ["日期", "摘要", "科目", "金额"]
+    cjtv = db.get(CompanyJournalTemplateVersion, "cjtv-1")
+    cjtv.columns_json = expected_cols
+    db.commit()
+
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
+    upload = test_client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+        headers=admin_auth,
+    ).json()
+
+    run = test_client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        headers=admin_auth,
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            "company_journal_template_version_id": "cjtv-1",
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "摘要": "summary",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [
+                {"target": "日期", "type": "field", "source": "transaction_date"},
+                {"target": "摘要", "type": "field", "source": "summary"},
+                {"target": "金额", "type": "field", "source": "net_amount"},
+            ],
+            "rules": [],
+            "required_columns": [],
+        },
+    ).json()
+    run_id = run["id"]
+
+    resp = test_client.get(
+        f"/api/tools/bank-journal/conversion-runs/{run_id}",
+        headers=admin_auth,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["journal_columns"] == expected_cols
+
+    get_settings.cache_clear()
+
+
+def test_run_response_exposes_journal_columns_fallback_from_preview_rows(
+    client_with_db, admin_auth, tmp_path
+) -> None:
+    """無绑定模板时，journal_columns 从 preview rows output_values 键并集（保序）提取。"""
+    import os
+
+    from app.core.config import get_settings
+
+    test_client, db = client_with_db
+    uploads = tmp_path / "uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    get_settings.cache_clear()
+    os.environ["UPLOAD_DIR"] = str(uploads)
+    get_settings.cache_clear()
+
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.csv"
+    upload = test_client.post(
+        "/api/files/upload",
+        files={"file": ("bank_statement_basic.csv", fixture.read_bytes(), "text/csv")},
+        data={"company_id": "company-1", "uploaded_by": "user-1"},
+        headers=admin_auth,
+    ).json()
+
+    run = test_client.post(
+        "/api/tools/bank-journal/conversion-runs",
+        headers=admin_auth,
+        json={
+            "company_id": "company-1",
+            "bank_account_id": "bank-account-1",
+            "source_file_ids": [upload["id"]],
+            # 无 company_journal_template_version_id → 走回退路径
+            "bank_parse_config": {
+                "file_type": "csv",
+                "sheet_name": "Sheet1",
+                "header_row_index": 0,
+                "data_start_row_index": 1,
+                "field_aliases": {
+                    "交易日期": "transaction_date",
+                    "收入": "income_amount",
+                    "支出": "expense_amount",
+                    "余额": "balance",
+                    "摘要": "summary",
+                    "流水号": "bank_transaction_id",
+                },
+                "amount_mode": "income_expense_columns",
+                "amount_config": {"income": "income_amount", "expense": "expense_amount"},
+                "date_formats": ["%Y-%m-%d"],
+            },
+            "mappings": [
+                {"target": "日期", "type": "field", "source": "transaction_date"},
+                {"target": "摘要", "type": "field", "source": "summary"},
+                {"target": "金额", "type": "field", "source": "net_amount"},
+            ],
+            "rules": [],
+            "required_columns": [],
+        },
+    ).json()
+    run_id = run["id"]
+
+    resp = test_client.get(
+        f"/api/tools/bank-journal/conversion-runs/{run_id}",
+        headers=admin_auth,
+    )
+    assert resp.status_code == 200
+    cols = resp.json()["journal_columns"]
+    # 包含映射的三个输出列
+    assert "日期" in cols
+    assert "摘要" in cols
+    assert "金额" in cols
+    # 内部键（_ 前缀）不应出现
+    assert not any(c.startswith("_") for c in cols)
+    # 保序：映射顺序 日期 < 摘要 < 金额
+    assert cols.index("日期") < cols.index("摘要") < cols.index("金额")
+
+    get_settings.cache_clear()

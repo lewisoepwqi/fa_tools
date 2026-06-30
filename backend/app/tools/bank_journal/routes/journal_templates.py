@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.deps import (
     CurrentUserDep,
@@ -12,6 +12,7 @@ from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.models.conversion import ConversionRun
 from app.tools.bank_journal.models.mapping import MappingProfile
 from app.tools.bank_journal.models.template import CompanyJournalTemplateVersion
+from app.tools.bank_journal.schemas.pagination import Page
 from app.tools.bank_journal.schemas.template import (
     CompanyJournalTemplateCreate,
     CompanyJournalTemplateResponse,
@@ -54,14 +55,18 @@ def create_journal_template(
 
 @router.get(
     "",
-    response_model=list[CompanyJournalTemplateResponse],
+    response_model=Page[CompanyJournalTemplateResponse],
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_journal_templates(
-    db: DbSession, user: CurrentUserDep, company_id: str | None = None
-) -> list[CompanyJournalTemplateResponse]:
+    db: DbSession,
+    user: CurrentUserDep,
+    company_id: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> Page[CompanyJournalTemplateResponse]:
     return template_service.list_journal_templates(
-        db, company_id, accessible=accessible_company_filter(user)
+        db, company_id, accessible=accessible_company_filter(user), limit=limit, offset=offset
     )
 
 

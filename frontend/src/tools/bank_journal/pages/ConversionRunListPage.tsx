@@ -2,24 +2,36 @@ import { Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../../auth/useAuth';
 import { listConversionRuns } from '../api/conversionRuns';
 import { StatusTag } from '../components/StatusTag';
 import type { ConversionRunListItem } from '../types/conversion';
 
 export function ConversionRunListPage() {
-  const [runs, setRuns] = useState<ConversionRunListItem[]>([]);
+  const { currentCompanyId } = useAuth();
+  const [items, setItems] = useState<ConversionRunListItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+
+  // 切换公司时重置页码，避免旧 offset 查新公司导致空表
+  useEffect(() => { setPage(1); }, [currentCompanyId]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    listConversionRuns()
-      .then((data) => {
-        if (active) setRuns(data);
+    listConversionRuns({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => {
+        if (active) { setItems(p.items ?? []); setTotal(p.total ?? 0); }
       })
       .catch(() => {
-        if (active) setRuns([]);
+        if (active) setItems([]);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -27,7 +39,7 @@ export function ConversionRunListPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [page, pageSize, currentCompanyId]);
 
   const columns: ColumnsType<ConversionRunListItem> = [
     { title: '批次号', dataIndex: 'id', key: 'id', render: (v) => <span className="num">{v}</span> },
@@ -62,9 +74,16 @@ export function ConversionRunListPage() {
       <Table<ConversionRunListItem>
         rowKey="id"
         columns={columns}
-        dataSource={runs}
+        dataSource={items}
         loading={loading}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 条`,
+          onChange: (p, ps) => { setPage(p); setPageSize(ps); }
+        }}
         locale={{
           emptyText: (
             <div className="empty-teach">

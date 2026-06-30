@@ -19,7 +19,10 @@ import type { BankTemplate } from '../types/templates';
 export function BankTemplatePage() {
   const { currentCompanyId, hasPermission } = useAuth();
   const canManage = hasPermission('template_manage');
-  const [rows, setRows] = useState<BankTemplate[]>([]);
+  const [items, setItems] = useState<BankTemplate[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -27,21 +30,32 @@ export function BankTemplatePage() {
 
   const load = () => {
     setLoading(true);
-    listBankTemplates()
-      .then(setRows)
-      .catch(() => setRows([]))
+    listBankTemplates({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => { setItems(p.items ?? []); setTotal(p.total ?? 0); })
+      .catch(() => { setItems([]); setTotal(0); })
       .finally(() => setLoading(false));
   };
+
+  // 切换公司时重置页码，避免旧 offset 查新公司导致空表
+  useEffect(() => { setPage(1); }, [currentCompanyId]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    listBankTemplates()
-      .then((data) => {
-        if (active) setRows(data);
+    listBankTemplates({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => {
+        if (active) { setItems(p.items ?? []); setTotal(p.total ?? 0); }
       })
       .catch(() => {
-        if (active) setRows([]);
+        if (active) setItems([]);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -49,7 +63,7 @@ export function BankTemplatePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [page, pageSize, currentCompanyId]);
 
   const handleSubmit = async (values: BankTemplateWizardValues) => {
     // 防止模态框打开后公司切换为空时仍提交
@@ -124,11 +138,14 @@ export function BankTemplatePage() {
       key: 'status',
       width: 80,
       render: (_, r) => (
-        <Switch
-          size="small"
-          checked={r.status === 'active'}
-          onChange={(checked) => handleToggleStatus(r.id, checked ? 'active' : 'inactive')}
-        />
+        <Tooltip title={!canManage ? '权限不足' : undefined}>
+          <Switch
+            size="small"
+            checked={r.status === 'active'}
+            disabled={!canManage}
+            onChange={(checked) => handleToggleStatus(r.id, checked ? 'active' : 'inactive')}
+          />
+        </Tooltip>
       )
     },
     {
@@ -153,22 +170,25 @@ export function BankTemplatePage() {
           >
             详情
           </Button>
-          <Popconfirm
-            title="确定删除该银行模板？"
-            description="被转换批次引用的模板无法删除。"
-            okText="删除"
-            okButtonProps={{ danger: true }}
-            cancelText="取消"
-            onConfirm={(e) => {
-              e?.stopPropagation();
-              handleDelete(r.id);
-            }}
-            onCancel={(e) => e?.stopPropagation()}
-          >
-            <Button size="small" type="link" danger onClick={(e) => e.stopPropagation()}>
-              删除
-            </Button>
-          </Popconfirm>
+          <Tooltip title={!canManage ? '权限不足' : undefined}>
+            <Popconfirm
+              title="确定删除该银行模板？"
+              description="被转换批次引用的模板无法删除。"
+              okText="删除"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              disabled={!canManage}
+              onConfirm={(e) => {
+                e?.stopPropagation();
+                handleDelete(r.id);
+              }}
+              onCancel={(e) => e?.stopPropagation()}
+            >
+              <Button size="small" type="link" danger disabled={!canManage} onClick={(e) => e.stopPropagation()}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Tooltip>
         </Space>
       )
     }
@@ -198,9 +218,16 @@ export function BankTemplatePage() {
       <Table<BankTemplate>
         rowKey="id"
         columns={columns}
-        dataSource={rows}
+        dataSource={items}
         loading={loading}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 条`,
+          onChange: (p, ps) => { setPage(p); setPageSize(ps); }
+        }}
         onRow={(record) => ({
           onClick: () => navigate(`/bank-journal/templates/bank/${record.id}`),
           style: { cursor: 'pointer' }

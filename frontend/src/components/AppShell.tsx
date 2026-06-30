@@ -4,6 +4,7 @@ import type { MenuProps } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
+import { listCompanies } from '../api/companies';
 import { registry, type ToolMenuItem } from '../tools/registry';
 
 const { Header, Sider, Content } = Layout;
@@ -65,8 +66,18 @@ export function AppShell({ children }: AppShellProps) {
 
   const { me, logout, hasPermission, currentCompanyId, setCurrentCompanyId } = useAuth();
 
-  // 公司列表：accessible_companies 为数组时直接用，为 "all" 时占位
+  // 公司列表：accessible_companies 为数组时直接用，为 "all" 时需异步拉取
   const companiesArray = Array.isArray(me?.accessible_companies) ? me.accessible_companies : null;
+  const isAllCompanies = me?.accessible_companies === 'all';
+
+  // "all" 角色（admin/auditor）：异步拉取全部可访问公司列表
+  const [allCompaniesList, setAllCompaniesList] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    if (!isAllCompanies) return;
+    listCompanies()
+      .then(setAllCompaniesList)
+      .catch(() => setAllCompaniesList([]));
+  }, [isAllCompanies]);
 
   // 初次加载：若 currentCompanyId 为 null 且有公司列表，自动选第一个
   useEffect(() => {
@@ -76,10 +87,14 @@ export function AppShell({ children }: AppShellProps) {
   }, [companiesArray, currentCompanyId, setCurrentCompanyId]);
 
   // 构建公司切换器选项
-  const companyOptions =
-    me?.accessible_companies === 'all'
-      ? [{ value: '', label: '全部公司' }]
-      : (companiesArray ?? []).map((c) => ({ value: c.id, label: c.name }));
+  // - 数组形态：直接映射
+  // - "all" 形态：「全部公司」（浏览用，value ''）+ 各具体公司（创建时需要）
+  const companyOptions = isAllCompanies
+    ? [
+        { value: '', label: '全部公司' },
+        ...allCompaniesList.map((c) => ({ value: c.id, label: c.name }))
+      ]
+    : (companiesArray ?? []).map((c) => ({ value: c.id, label: c.name }));
 
   // 权限过滤后的菜单
   const visibleTools = registry.filter(
@@ -155,7 +170,7 @@ export function AppShell({ children }: AppShellProps) {
           {/* 公司切换器 */}
           {me && companyOptions.length > 0 && (
             <Select
-              value={me.accessible_companies === 'all' ? '' : (currentCompanyId ?? undefined)}
+              value={isAllCompanies ? (currentCompanyId ?? '') : (currentCompanyId ?? undefined)}
               onChange={(v: string) => setCurrentCompanyId(v || null)}
               options={companyOptions}
               style={{ width: 160, marginRight: 12 }}

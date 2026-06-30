@@ -1,10 +1,11 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi import status as http_status
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import and_, func
+from sqlalchemy.orm import aliased
 
 from app.api.deps import (
     CurrentUserDep,
@@ -18,6 +19,7 @@ from app.core.permissions import Permission
 from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.models.conversion import ConversionRunRuleVersion
 from app.tools.bank_journal.models.rule import Rule, RuleVersion
+from app.tools.bank_journal.schemas.pagination import Page
 from app.tools.bank_journal.schemas.rule import (
     RuleCreate,
     RuleResponse,
@@ -91,7 +93,7 @@ def create_rule(
 
 @router.get(
     "",
-    response_model=list[RuleResponse],
+    response_model=Page[RuleResponse],
     dependencies=[Depends(require(Permission.READ))],
 )
 def list_rules(
@@ -100,8 +102,10 @@ def list_rules(
     company_id: str | None = None,
     scope_type: str | None = None,
     scope_id: str | None = None,
-) -> list[RuleResponse]:
-    """列表。
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> Page[RuleResponse]:
+    """列表（分页）。
 
     可选过滤：company_id / scope_type(+scope_id)。
     scope 过滤用于模板详情页展示"绑定了哪些规则"（规则用松散 scope_type+scope_id 约定绑定）。
@@ -120,10 +124,29 @@ def list_rules(
         query = query.filter(Rule.scope_id == scope_id)
     # 软删除项不在列表/下拉中展示
     query = query.filter(Rule.status != RecordStatus.DELETED.value)
-    parents = query.all()
+
+    # 按最新版本的 priority 升序排序（NULL 排最后），次级键 Rule.id 保稳定分页
+    latest_sub = (
+        db.query(RuleVersion.rule_id, func.max(RuleVersion.version_no).label("mvno"))
+        .group_by(RuleVersion.rule_id)
+        .subquery()
+    )
+    RV = aliased(RuleVersion)
+    query = (
+        query.outerjoin(latest_sub, latest_sub.c.rule_id == Rule.id)
+        .outerjoin(RV, and_(RV.rule_id == Rule.id, RV.version_no == latest_sub.c.mvno))
+    )
+    total = query.count()
+    parents = (
+        query.order_by(RV.priority.asc().nullslast(), Rule.id.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     if not parents:
-        return []
+        return Page[RuleResponse](items=[], total=total, limit=limit, offset=offset)
     parent_ids = [p.id for p in parents]
+    # 取每条规则的最新版本对象（用于构造 response）
     latest_no = (
         db.query(
             RuleVersion.rule_id.label("pid"),
@@ -143,7 +166,12 @@ def list_rules(
         .all()
     )
     by_parent = {v.rule_id: v for v in versions}
-    return [_to_response(p, by_parent.get(p.id)) for p in parents]
+    return Page[RuleResponse](
+        items=[_to_response(p, by_parent.get(p.id)) for p in parents],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(
@@ -345,10 +373,13 @@ def reorder_rules(
     为每条规则创建一个新版本承载新 priority（保持版本化不可变语义）。
     """
     updated: list[dict[str, Any]] = []
+    # 收集每条被重排规则的公司归属，供审计用
+    audit_items: list[tuple[str, str]] = []  # (rule_id, company_id)
     for item in payload.items:
         parent = _get_rule_or_404(db, item.rule_id)  # 校验规则存在
         # 派生公司写校验：reorder 按 rule_id 携带，逐条校验其公司可访问
         require_company_access(user, parent.company_id)
+        audit_items.append((item.rule_id, parent.company_id))
         before_latest = _latest_rule_version(db, item.rule_id)
         if before_latest is None:
             raise HTTPException(
@@ -371,16 +402,18 @@ def reorder_rules(
         db.add(new_version)
         updated.append({"rule_id": item.rule_id, "priority": item.priority})
     db.commit()
-    record_audit_event(
-        db,
-        company_id=None,
-        actor_id=user.id,
-        action="rule.priority_changed",
-        entity_type="rule",
-        entity_id=",".join(item.rule_id for item in payload.items),
-        after={"updated": updated},
-        **audit_ctx(request),
-    )
+    # 按规则各自所属公司逐条写审计，确保 company_id 正确记录
+    for rule_id, company_id in audit_items:
+        record_audit_event(
+            db,
+            company_id=company_id,
+            actor_id=user.id,
+            action="rule.priority_changed",
+            entity_type="rule",
+            entity_id=rule_id,
+            after={"updated": updated},
+            **audit_ctx(request),
+        )
     return {"updated": updated}
 
 

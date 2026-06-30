@@ -82,6 +82,9 @@ class DryRunResponse(BaseModel):
 class ConversionRunSummary(BaseModel):
     total_rows: int = 0
     parse_failed_rows: int = 0
+    auto_confirmed_rows: int = 0
+    needs_confirmation_rows: int = 0
+    conflict_rows: int = 0
 
 
 class ConversionRunListItemResponse(BaseModel):
@@ -111,3 +114,5 @@ class ConversionRunResponse(BaseModel):
     bank_template_version_id: str | None = None
     company_journal_template_version_id: str | None = None
     mapping_profile_version_id: str | None = None
+    # Task 9：按绑定日记账模板版本 columns_json 动态渲染列（无绑定时回退为 preview rows 键并集）
+    journal_columns: list[str] = []

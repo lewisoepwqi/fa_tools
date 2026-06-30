@@ -45,7 +45,10 @@ import type { MappingProfile } from '../types/mapping';
 export function MappingProfilePage() {
   const { currentCompanyId, hasPermission } = useAuth();
   const canManage = hasPermission('template_manage');
-  const [rows, setRows] = useState<MappingProfile[]>([]);
+  const [items, setItems] = useState<MappingProfile[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -72,25 +75,41 @@ export function MappingProfilePage() {
 
   const load = () => {
     setLoading(true);
-    listMappingProfiles()
-      .then(setRows)
-      .catch(() => setRows([]))
+    listMappingProfiles({
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      company_id: currentCompanyId ?? undefined
+    })
+      .then((p) => { setItems(p.items ?? []); setTotal(p.total ?? 0); })
+      .catch(() => { setItems([]); setTotal(0); })
       .finally(() => setLoading(false));
   };
+
+  // 切换公司时重置页码，避免旧 offset 查新公司导致空表
+  useEffect(() => { setPage(1); }, [currentCompanyId]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     // 同时加载映射方案 + 银行/日记账模板，用于列表中解析模板名（修复首渲染显示 -）
-    Promise.all([listMappingProfiles(), listBankTemplates(), listJournalTemplates()])
+    Promise.all([
+      listMappingProfiles({
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+        company_id: currentCompanyId ?? undefined
+      }),
+      listBankTemplates({ limit: 500 }),
+      listJournalTemplates({ limit: 500 })
+    ])
       .then(([data, banks, journals]) => {
         if (!active) return;
-        setRows(data);
-        setBankTemplates(banks);
-        setJournalTemplates(journals);
+        setItems(data.items ?? []);
+        setTotal(data.total ?? 0);
+        setBankTemplates(banks.items ?? []);
+        setJournalTemplates(journals.items ?? []);
       })
       .catch(() => {
-        if (active) setRows([]);
+        if (active) setItems([]);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -98,7 +117,7 @@ export function MappingProfilePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [page, pageSize, currentCompanyId]);
 
   // 打开弹窗时加载可选模板
   const openCreate = async () => {
@@ -109,9 +128,12 @@ export function MappingProfilePage() {
     setMappings([]);
     setModalOpen(true);
     try {
-      const [banks, journals] = await Promise.all([listBankTemplates(), listJournalTemplates()]);
-      setBankTemplates(banks);
-      setJournalTemplates(journals);
+      const [banks, journals] = await Promise.all([
+        listBankTemplates({ limit: 500 }),
+        listJournalTemplates({ limit: 500 })
+      ]);
+      setBankTemplates(banks.items);
+      setJournalTemplates(journals.items);
     } catch {
       // 加载失败不阻塞，允许手动输入列名
     }
@@ -233,11 +255,14 @@ export function MappingProfilePage() {
       key: 'status',
       width: 80,
       render: (_, r) => (
-        <Switch
-          size="small"
-          checked={r.status === 'active'}
-          onChange={(checked) => handleToggleStatus(r.id, checked ? 'active' : 'inactive')}
-        />
+        <Tooltip title={!canManage ? '权限不足' : undefined}>
+          <Switch
+            size="small"
+            checked={r.status === 'active'}
+            disabled={!canManage}
+            onChange={(checked) => handleToggleStatus(r.id, checked ? 'active' : 'inactive')}
+          />
+        </Tooltip>
       )
     },
     {
@@ -262,22 +287,25 @@ export function MappingProfilePage() {
           >
             详情
           </Button>
-          <Popconfirm
-            title="确定删除该映射方案？"
-            description="被转换批次引用的方案无法删除。"
-            okText="删除"
-            okButtonProps={{ danger: true }}
-            cancelText="取消"
-            onConfirm={(e) => {
-              e?.stopPropagation();
-              handleDelete(r.id);
-            }}
-            onCancel={(e) => e?.stopPropagation()}
-          >
-            <Button size="small" type="link" danger onClick={(e) => e.stopPropagation()}>
-              删除
-            </Button>
-          </Popconfirm>
+          <Tooltip title={!canManage ? '权限不足' : undefined}>
+            <Popconfirm
+              title="确定删除该映射方案？"
+              description="被转换批次引用的方案无法删除。"
+              okText="删除"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              disabled={!canManage}
+              onConfirm={(e) => {
+                e?.stopPropagation();
+                handleDelete(r.id);
+              }}
+              onCancel={(e) => e?.stopPropagation()}
+            >
+              <Button size="small" type="link" danger disabled={!canManage} onClick={(e) => e.stopPropagation()}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Tooltip>
         </Space>
       )
     }
@@ -307,9 +335,16 @@ export function MappingProfilePage() {
       <Table<MappingProfile>
         rowKey="id"
         columns={columns}
-        dataSource={rows}
+        dataSource={items}
         loading={loading}
-        pagination={false}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 条`,
+          onChange: (p, ps) => { setPage(p); setPageSize(ps); }
+        }}
         onRow={(record) => ({
           onClick: () => navigate(`/bank-journal/templates/mapping/${record.id}`),
           style: { cursor: 'pointer' }

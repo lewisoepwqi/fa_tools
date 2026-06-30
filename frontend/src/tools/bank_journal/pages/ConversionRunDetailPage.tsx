@@ -23,12 +23,13 @@ import { useAuth } from '../../../auth/useAuth';
 import { message } from '../../../components/antdApp';
 import { getConversionRun } from '../api/conversionRuns';
 import { createExport, downloadExport } from '../api/exports';
-import { adjustPreviewRow, confirmPreviewRow } from '../api/previewRows';
+import { adjustPreviewRow, confirmPreviewRow, listPreviewRows } from '../api/previewRows';
 import { ExceptionTag } from '../components/ExceptionTag';
 import { StatusTag } from '../components/StatusTag';
 import type { ConversionRunResponse, PreviewRow } from '../types/conversion';
 
 const JOURNAL_COLUMNS = ['日期', '摘要', '科目', '金额'];
+const PAGE_SIZE = 20;
 
 function renderValue(value: unknown): string {
   if (value === null || value === undefined) {
@@ -39,8 +40,8 @@ function renderValue(value: unknown): string {
 
 /**
  * 批次详情。
- * - 独立路由页：根据 URL :runId 自取数据。
- * - 上传页转换完成后内联展示：传入 run prop 跳过拉取。
+ * - 独立路由页：根据 URL :runId 自取数据；preview_rows 服务端分页，统计取 summary。
+ * - 上传页转换完成后内联展示：传入 run prop 跳过拉取，使用内嵌 preview_rows（量小，客户端过滤）。
  * 支持：按状态/异常筛选、单行编辑、单行确认、批量确认、导出。
  */
 export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunResponse }) {
@@ -59,6 +60,13 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
   const [editingRow, setEditingRow] = useState<PreviewRow | null>(null);
   const [editForm] = Form.useForm();
 
+  // 独立路由形态专用：服务端分页行状态
+  const [rows, setRows] = useState<PreviewRow[]>([]);
+  const [rowsTotal, setRowsTotal] = useState(0);
+  const [rowPage, setRowPage] = useState(1);
+  const [rowsLoading, setRowsLoading] = useState(false);
+
+  // 加载批次元数据（独立路由形态）
   const reload = (id: string) => {
     setLoading(true);
     getConversionRun(id)
@@ -77,35 +85,84 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, runProp]);
 
+  // 独立路由形态：监听分页/状态筛选变化，服务端拉取当前页
+  useEffect(() => {
+    if (runProp || !runId) return;
+    setRowsLoading(true);
+    listPreviewRows(runId, {
+      limit: PAGE_SIZE,
+      offset: (rowPage - 1) * PAGE_SIZE,
+      ...(statusFilter ? { status: statusFilter } : {})
+    })
+      .then((page) => {
+        setRows(page.items);
+        setRowsTotal(page.total);
+      })
+      .catch(() => setRows([]))
+      .finally(() => setRowsLoading(false));
+  }, [runId, runProp, rowPage, statusFilter]);
+
+  // 独立路由形态：操作成功后刷新当前页 + 重拉摘要
+  const refreshRows = () => {
+    if (!runId) return;
+    listPreviewRows(runId, {
+      limit: PAGE_SIZE,
+      offset: (rowPage - 1) * PAGE_SIZE,
+      ...(statusFilter ? { status: statusFilter } : {})
+    })
+      .then((page) => {
+        setRows(page.items);
+        setRowsTotal(page.total);
+      })
+      .catch(() => {});
+    getConversionRun(runId).then(setRun).catch(() => {});
+  };
+
+  // Task 9：动态日记账列——优先用后端返回的 journal_columns，兜底用硬编码常量
+  const journalColumns = useMemo(() => {
+    return run?.journal_columns?.length ? run.journal_columns : JOURNAL_COLUMNS;
+  }, [run]);
+
+  // 统计：读 run.summary（不再全量 filter 计数）
   const stats = useMemo(() => {
     if (!run) return { total: 0, auto: 0, needs: 0, conflict: 0, parseFailed: 0 };
-    const rows = run.preview_rows;
+    const s = run.summary;
     return {
-      total: rows.length,
-      auto: rows.filter((r) => r.status === 'auto_confirmed').length,
-      needs: rows.filter((r) => r.status === 'needs_confirmation').length,
-      conflict: rows.filter((r) => r.status === 'conflict').length,
-      parseFailed: rows.filter((r) => r.status === 'parse_failed').length
+      total: s.total_rows,
+      auto: s.auto_confirmed_rows ?? 0,
+      needs: s.needs_confirmation_rows ?? 0,
+      conflict: s.conflict_rows ?? 0,
+      parseFailed: s.parse_failed_rows ?? 0
     };
   }, [run]);
 
-  // 收集本批次出现过的异常码，用于筛选下拉
+  // 异常码下拉选项：内联形态取全量 preview_rows；独立形态取当前页并标注「(本页)」
   const exceptionOptions = useMemo(() => {
-    if (!run) return [];
+    const source = runProp ? (run?.preview_rows ?? []) : rows;
     const codes = new Set<string>();
-    run.preview_rows.forEach((r) => r.exception_codes.forEach((c) => codes.add(c)));
-    return Array.from(codes);
-  }, [run]);
+    source.forEach((r) => r.exception_codes.forEach((c) => codes.add(c)));
+    return Array.from(codes).map((c) => ({
+      value: c,
+      label: runProp ? c : `${c}(本页)`
+    }));
+  }, [runProp, run, rows]);
 
-  const filteredRows = useMemo(() => {
-    if (!run) return [];
-    return run.preview_rows.filter((r) => {
-      if (statusFilter && r.status !== statusFilter) return false;
+  // 表格数据源：内联形态客户端双重过滤；独立形态对当前页按异常客户端过滤（状态已服务端过滤）
+  const tableRows = useMemo(() => {
+    if (runProp) {
+      return (run?.preview_rows ?? []).filter((r) => {
+        if (statusFilter && r.status !== statusFilter) return false;
+        if (exceptionFilter && !r.exception_codes.includes(exceptionFilter)) return false;
+        return true;
+      });
+    }
+    return rows.filter((r) => {
       if (exceptionFilter && !r.exception_codes.includes(exceptionFilter)) return false;
       return true;
     });
-  }, [run, statusFilter, exceptionFilter]);
+  }, [runProp, run, rows, statusFilter, exceptionFilter]);
 
+  // 内联形态：本地 patch（不调后端）
   const patchRowLocally = (rowId: string, patch: Partial<PreviewRow>) => {
     setRun((prev) => {
       if (!prev) return prev;
@@ -123,7 +180,11 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
     setActing(true);
     try {
       const result = await confirmPreviewRow(row.id);
-      patchRowLocally(row.id, { status: result.status });
+      if (runProp) {
+        patchRowLocally(row.id, { status: result.status });
+      } else {
+        refreshRows();
+      }
       message.success('已确认');
     } catch (err) {
       message.error(err instanceof Error ? err.message : '确认失败');
@@ -133,7 +194,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
   };
 
   const handleBatchConfirm = async () => {
-    const targets = filteredRows.filter(
+    const targets = tableRows.filter(
       (r) => r.id && selectedRowKeys.includes(r.row_index) && r.status !== 'manually_confirmed'
     );
     if (targets.length === 0) {
@@ -146,7 +207,9 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
       if (!row.id) continue;
       try {
         const result = await confirmPreviewRow(row.id);
-        patchRowLocally(row.id, { status: result.status });
+        if (runProp) {
+          patchRowLocally(row.id, { status: result.status });
+        }
         ok += 1;
       } catch {
         /* 继续处理其余行 */
@@ -154,14 +217,18 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
     }
     setActing(false);
     setSelectedRowKeys([]);
+    if (!runProp) {
+      refreshRows();
+    }
     message.success(`已批量确认 ${ok} 行`);
   };
 
   const openEdit = (row: PreviewRow) => {
+    const firstCol = journalColumns[0] ?? '科目';
     setEditingRow(row);
     editForm.setFieldsValue({
-      field_name: '科目',
-      new_value: renderValue(row.output_values['科目']),
+      field_name: firstCol,
+      new_value: renderValue(row.output_values[firstCol]),
       reason: ''
     });
   };
@@ -177,9 +244,13 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
         values.new_value,
         values.reason || null
       );
-      patchRowLocally(editingRow.id, {
-        output_values: { ...editingRow.output_values, [values.field_name]: values.new_value }
-      });
+      if (runProp) {
+        patchRowLocally(editingRow.id, {
+          output_values: { ...editingRow.output_values, [values.field_name]: values.new_value }
+        });
+      } else {
+        refreshRows();
+      }
       message.success('已修改');
       setEditingRow(null);
     } catch (err) {
@@ -195,7 +266,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
     try {
       const result = await createExport(run.id, {
         file_type: 'xlsx',
-        columns: JOURNAL_COLUMNS,
+        columns: journalColumns,
         only_confirmed: onlyConfirmed
       });
       message.success(`已生成导出（${result.row_count} 行）`);
@@ -207,6 +278,13 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
     }
   };
 
+  // 动态日记账列：按 journalColumns 顺序生成，每列从 output_values 取值
+  const dynamicCols: ColumnsType<PreviewRow> = journalColumns.map((col) => ({
+    title: col,
+    key: col,
+    render: (_: unknown, record: PreviewRow) => renderValue(record.output_values?.[col])
+  }));
+
   const columns: ColumnsType<PreviewRow> = [
     {
       title: '行号',
@@ -215,29 +293,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
       width: 64,
       render: (v) => <span className="num num-right">{renderValue(v)}</span>
     },
-    {
-      title: '日期',
-      key: '日期',
-      render: (_, record) => renderValue(record.output_values['日期'])
-    },
-    {
-      title: '摘要',
-      key: '摘要',
-      render: (_, record) => renderValue(record.output_values['摘要'])
-    },
-    {
-      title: '科目',
-      key: '科目',
-      render: (_, record) => renderValue(record.output_values['科目'])
-    },
-    {
-      title: '金额',
-      key: '金额',
-      align: 'right',
-      render: (_, record) => (
-        <span className="num num-right">{renderValue(record.output_values['金额'])}</span>
-      )
-    },
+    ...dynamicCols,
     {
       title: '状态',
       dataIndex: 'status',
@@ -343,7 +399,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
         </Descriptions>
       </Card>
 
-      {/* 第二段：统计数字卡片（关键数据点睛） */}
+      {/* 第二段：统计数字卡片（取 summary） */}
       <Row gutter={16}>
         <Col span={6}>
           <Card className="work-card">
@@ -381,7 +437,12 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
             placeholder="按状态筛选"
             style={{ width: 150 }}
             value={statusFilter}
-            onChange={setStatusFilter}
+            onChange={(val) => {
+              setStatusFilter(val);
+              setSelectedRowKeys([]);
+              // 独立形态：状态筛选变化时重置到第 1 页
+              if (!runProp) setRowPage(1);
+            }}
             options={[
               { value: 'needs_confirmation', label: '待确认' },
               { value: 'auto_confirmed', label: '已自动确认' },
@@ -397,7 +458,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
               style={{ width: 210 }}
               value={exceptionFilter}
               onChange={setExceptionFilter}
-              options={exceptionOptions.map((c) => ({ value: c, label: c }))}
+              options={exceptionOptions}
             />
           )}
           <Tooltip title={!canConfirm ? '权限不足' : undefined}>
@@ -413,8 +474,20 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
         <Table<PreviewRow>
           rowKey="row_index"
           columns={columns}
-          dataSource={filteredRows}
-          pagination={false}
+          dataSource={tableRows}
+          loading={rowsLoading}
+          pagination={
+            runProp
+              ? false
+              : {
+                  current: rowPage,
+                  pageSize: PAGE_SIZE,
+                  total: rowsTotal,
+                  onChange: (page) => { setRowPage(page); setSelectedRowKeys([]); },
+                  showTotal: (total) => `共 ${total} 行`,
+                  showSizeChanger: false
+                }
+          }
           scroll={{ x: 'max-content' }}
           rowSelection={{
             selectedRowKeys,
@@ -435,7 +508,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
             </Button>
           </Tooltip>
         </div>
-        {filteredRows.length === 0 && (
+        {tableRows.length === 0 && !rowsLoading && (
           <div className="empty-teach" style={{ marginTop: 12 }}>
             <strong>当前筛选条件下无数据</strong>
             清除筛选条件以查看全部转换结果
@@ -455,7 +528,7 @@ export function ConversionRunDetailPage({ run: runProp }: { run?: ConversionRunR
         <Form form={editForm} layout="vertical">
           <Form.Item name="field_name" label="字段" rules={[{ required: true }]}>
             <Select
-              options={JOURNAL_COLUMNS.map((c) => ({ value: c, label: c }))}
+              options={journalColumns.map((c) => ({ value: c, label: c }))}
             />
           </Form.Item>
           <Form.Item name="new_value" label="新值" rules={[{ required: true }]}>
