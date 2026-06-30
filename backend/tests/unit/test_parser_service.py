@@ -462,9 +462,21 @@ def test_read_rows_decodes_gbk_csv(tmp_path):
         writer = csv.writer(fh)
         writer.writerow(["日期", "摘要", "金额"])
         writer.writerow(["2026-01-01", "工资", "100"])
-    rows = _read_rows(path, "csv", "")
+    rows = list(_read_rows(path, "csv", ""))  # 物化迭代器以供随机访问
     assert rows[0] == ["日期", "摘要", "金额"]
     assert rows[1][1] == "工资"
+
+
+def test_read_rows_is_lazy_iterator(tmp_path):
+    """_read_rows 返回惰性迭代器，不一次性物化整表。"""
+    import types
+
+    csv_path = tmp_path / "big.csv"
+    csv_path.write_text("h1,h2\n" + "\n".join(f"a{i},b{i}" for i in range(1000)), encoding="utf-8")
+    rows = _read_rows(str(csv_path), "csv", "")
+    assert isinstance(rows, types.GeneratorType) or hasattr(rows, "__next__")
+    first = next(iter(rows))
+    assert first is not None
 
 
 def test_decimal_cleaning_variants():
