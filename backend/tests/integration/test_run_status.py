@@ -63,7 +63,7 @@ def test_process_run_failure_sets_failed_status(client_with_db, monkeypatch, tmp
     monkeypatch.setattr(conversion_service, "_parse_and_build_rows", boom, raising=False)
 
     # 第二步：执行处理，预期返回 failed 响应，不抛 500
-    resp = conversion_service.process_conversion_run(db, run.id, _upload_dir(tmp_path))
+    resp = conversion_service.process_conversion_run(db, run.id, _upload_dir(tmp_path), payload)
 
     assert resp.status == "failed"
     assert resp.error_message is not None and "解析失败" in resp.error_message

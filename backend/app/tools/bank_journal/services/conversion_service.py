@@ -386,12 +386,9 @@ def process_conversion_run(
     db: Session,
     run_id: str,
     upload_dir: Path,
-    payload: ConversionRunCreate | None = None,
+    payload: ConversionRunCreate,
 ) -> ConversionRunResponse:
-    """PROCESSING → try 解析/落库/summary → COMPLETED；异常 → FAILED + error_message，不抛 500。
-
-    payload 为 None 时依赖调用方已 monkeypatch _parse_and_build_rows（测试场景）。
-    """
+    """PROCESSING → try 解析/落库/summary → COMPLETED；异常 → FAILED + error_message，不抛 500。"""
     run = db.get(ConversionRun, run_id)
     if run is None:
         raise HTTPException(
@@ -403,7 +400,7 @@ def process_conversion_run(
     db.flush()
 
     try:
-        preview_rows, parse_failed_count = _parse_and_build_rows(db, run, payload, upload_dir)  # type: ignore[arg-type]
+        preview_rows, parse_failed_count = _parse_and_build_rows(db, run, payload, upload_dir)
 
         status_counts: Counter[str] = Counter(p.status for p in preview_rows)
         run.summary_json = {
