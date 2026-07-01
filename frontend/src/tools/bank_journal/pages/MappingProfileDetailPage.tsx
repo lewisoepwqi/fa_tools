@@ -31,6 +31,7 @@ import {
   mappingToBackend,
   type MappingEntry
 } from '../components/MappingEditor';
+import { MappingConfigView } from '../components/MappingConfigView';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { BankTemplate, JournalTemplate } from '../types/templates';
@@ -51,6 +52,8 @@ export function MappingProfileDetailPage() {
   const [bankTemplates, setBankTemplates] = useState<BankTemplate[]>([]);
   const [journalTemplates, setJournalTemplates] = useState<JournalTemplate[]>([]);
   const [editMappings, setEditMappings] = useState<MappingEntry[]>([]);
+  // 编辑态：从绑定的日记账模板提取的列名，作为映射目标的下拉选项。
+  const [editTargetOptions, setEditTargetOptions] = useState<string[] | undefined>(undefined);
 
   const load = (profileId: string) => {
     setLoading(true);
@@ -82,6 +85,10 @@ export function MappingProfileDetailPage() {
   const openEdit = () => {
     if (!data) return;
     setEditMappings(mappingFromBackend(data.latest_version.mappings_json));
+    // 从绑定的日记账模板提取列名，作为映射目标下拉选项（两端都是模板字段，都应选择）
+    const journalTpl = journalTemplates.find((t) => t.id === data.company_journal_template_id);
+    const cols = (journalTpl?.latest_version.columns_json as string[] | null) ?? null;
+    setEditTargetOptions(cols ?? undefined);
     setEditOpen(true);
   };
 
@@ -163,11 +170,6 @@ export function MappingProfileDetailPage() {
           </Button>
           <h2 className="section-title">{data.name}</h2>
           <div className="toolbar-spacer" />
-          <Tooltip title={!canManage ? '权限不足' : undefined}>
-            <Button icon={<EditOutlined />} onClick={openEdit} disabled={!canManage}>
-              编辑（新版本）
-            </Button>
-          </Tooltip>
           <Button onClick={() => setHistoryOpen(true)}>版本历史</Button>
           <Tooltip title={!canManage ? '权限不足' : undefined}>
             <Button onClick={handleToggleStatus} disabled={!canManage}>
@@ -176,13 +178,26 @@ export function MappingProfileDetailPage() {
           </Tooltip>
         </div>
         <Descriptions size="small" column={2} bordered>
-          <Descriptions.Item label="方案ID">{data.id}</Descriptions.Item>
-          <Descriptions.Item label="公司">{data.company_id}</Descriptions.Item>
+          <Descriptions.Item label="公司">{data.company_name ?? data.company_id}</Descriptions.Item>
           <Descriptions.Item label="银行流水模板">
             {bankTemplates.find((t) => t.id === data.bank_template_id)?.name ?? '-'}
           </Descriptions.Item>
+          <Descriptions.Item label="银行模板版本">
+            {v.bank_template_version_no != null ? (
+              <VersionBadge version={v.bank_template_version_no} />
+            ) : (
+              <Typography.Text type="secondary">未绑定（取最新）</Typography.Text>
+            )}
+          </Descriptions.Item>
           <Descriptions.Item label="日记账模板">
             {journalTemplates.find((t) => t.id === data.company_journal_template_id)?.name ?? '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label="日记账模板版本">
+            {v.company_journal_template_version_no != null ? (
+              <VersionBadge version={v.company_journal_template_version_no} />
+            ) : (
+              <Typography.Text type="secondary">未绑定（取最新）</Typography.Text>
+            )}
           </Descriptions.Item>
           <Descriptions.Item label="状态">
             <StatusTag status={data.status} />
@@ -190,32 +205,55 @@ export function MappingProfileDetailPage() {
           <Descriptions.Item label="最新版本">
             <VersionBadge version={v.version_no} />
           </Descriptions.Item>
+          <Descriptions.Item label="版本创建者">{v.created_by_name ?? v.created_by ?? '-'}</Descriptions.Item>
         </Descriptions>
       </Card>
-      <Card className="work-card" title={`配置详情 · v${v.version_no}`}>
-        <Alert
-          type="info"
-          showIcon
-          message="映射关系"
-          description={describeMappings(currentEntries)}
-        />
+      <Card
+        className="work-card"
+        title={`配置详情 · v${v.version_no}`}
+        extra={
+          editOpen ? (
+            <Space>
+              <Button type="primary" loading={editing} onClick={handleEdit}>
+                保存（创建新版本）
+              </Button>
+              <Button onClick={() => setEditOpen(false)}>取消</Button>
+            </Space>
+          ) : (
+            <Tooltip title={!canManage ? '权限不足' : undefined}>
+              <Button icon={<EditOutlined />} onClick={openEdit} disabled={!canManage}>
+                编辑
+              </Button>
+            </Tooltip>
+          )
+        }
+      >
+        {editOpen ? (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Alert
+              type="warning"
+              showIcon
+              message="修改将创建新版本，旧版本保留用于历史追溯。"
+            />
+            <MappingEditor
+              value={editMappings}
+              onChange={setEditMappings}
+              targetOptions={editTargetOptions}
+            />
+          </Space>
+        ) : (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Alert
+              type="info"
+              showIcon
+              message="映射关系"
+              description={describeMappings(currentEntries)}
+            />
+            <MappingConfigView entries={currentEntries} />
+          </Space>
+        )}
       </Card>
 
-      <Modal
-        open={editOpen}
-        title="编辑映射方案（创建新版本）"
-        okText="创建新版本"
-        cancelText="取消"
-        confirmLoading={editing}
-        onOk={handleEdit}
-        onCancel={() => setEditOpen(false)}
-        destroyOnHidden
-        width={680}
-      >
-        <div style={{ marginTop: 16 }}>
-          <MappingEditor value={editMappings} onChange={setEditMappings} />
-        </div>
-      </Modal>
 
       <Modal
         open={historyOpen}
@@ -230,6 +268,12 @@ export function MappingProfileDetailPage() {
           dataSource={versions}
           pagination={false}
           size="small"
+          expandable={{
+            expandedRowRender: (r) => (
+              <MappingConfigView entries={mappingFromBackend(r.mappings_json)} />
+            ),
+            rowExpandable: (r) => mappingFromBackend(r.mappings_json).some((e) => e.target)
+          }}
         />
       </Modal>
     </Space>

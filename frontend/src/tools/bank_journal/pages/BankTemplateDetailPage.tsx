@@ -1,5 +1,5 @@
 import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
-import { Button, Card, Descriptions, Empty, Modal, Space, Spin, Table, Tooltip, Typography } from 'antd';
+import { Alert, Button, Card, Descriptions, Empty, Modal, Space, Spin, Table, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -13,19 +13,41 @@ import {
 } from '../api/bankTemplates';
 import { listMappingProfiles } from '../api/mappingProfiles';
 import { AMOUNT_MODE_LABEL, FILE_TYPE_LABEL, rowIndexOf } from '../constants';
-import { BankTemplateWizard } from '../components/BankTemplateWizard';
-import type { BankTemplateWizardValues } from '../components/BankTemplateWizard';
-import { DetectResultView } from '../components/DetectResultView';
+import { DetectResultView, type BankTemplateConfigView } from '../components/DetectResultView';
+import { useStandardFields } from '../components/useStandardFields';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
 import type { BankTemplate, BankTemplateVersion } from '../types/templates';
 import type { MappingProfile } from '../types/mapping';
+
+/**
+ * 把后端版本对象（字段带 _json 后缀）适配成 DetectResultView 期望的 config
+ * （无后缀）。detect API 返回的就是无后缀形态，故 DetectResultView 同时服务
+ * detect 结果与版本详情，但版本对象的字段名带 _json，需在此映射。
+ */
+function versionToConfigView(v: BankTemplateVersion): BankTemplateConfigView {
+  return {
+    file_type: v.file_type,
+    sheet_name:
+      (v.sheet_selector_json as { sheet_name?: string } | null)?.sheet_name ?? '',
+    header_row_index: v.header_row_index,
+    data_start_row_index: v.data_start_row_index,
+    field_aliases: (v.field_aliases_json ?? {}) as Record<string, string>,
+    amount_mode: v.amount_mode,
+    amount_config: (v.amount_config_json ?? {}) as Record<string, string>,
+    date_formats: (v.date_formats_json ?? []) as string[],
+    unique_key_config: v.unique_key_config_json,
+    sample_file_id: v.sample_file_id,
+    sample_file_name: v.sample_file_name
+  };
+}
 
 export function BankTemplateDetailPage() {
   const { hasPermission } = useAuth();
   const canManage = hasPermission('template_manage');
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const standardFields = useStandardFields();
   const [data, setData] = useState<BankTemplate | null>(null);
   const [versions, setVersions] = useState<BankTemplateVersion[]>([]);
   const [referencedBy, setReferencedBy] = useState<MappingProfile[]>([]);
@@ -33,6 +55,8 @@ export function BankTemplateDetailPage() {
   const [editing, setEditing] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // 编辑态：回填当前版本配置，DetectResultView 可编辑模式直接修改 field_aliases。
+  const [editDetect, setEditDetect] = useState<BankTemplateConfigView | null>(null);
 
   const load = (templateId: string) => {
     setLoading(true);
@@ -61,26 +85,29 @@ export function BankTemplateDetailPage() {
   }, [id]);
 
   const openEdit = () => {
+    if (!data) return;
+    setEditDetect(versionToConfigView(data.latest_version));
     setEditOpen(true);
   };
 
-  const handleEditSubmit = async (values: BankTemplateWizardValues) => {
-    if (!id) return;
+  const handleEditSubmit = async () => {
+    if (!id || !editDetect) return;
     setEditing(true);
     try {
       await createBankTemplateVersion(id, {
-        file_type: values.detect.file_type,
-        sheet_selector_json: values.detect.sheet_name ? { sheet_name: values.detect.sheet_name } : null,
-        header_row_index: values.detect.header_row_index,
-        data_start_row_index: values.detect.data_start_row_index,
-        field_aliases_json: values.detect.field_aliases,
-        amount_mode: values.detect.amount_mode,
-        amount_config_json: values.detect.amount_config,
-        date_formats_json: values.detect.date_formats,
-        sample_file_id: values.sample_file_id ?? null
+        file_type: editDetect.file_type,
+        sheet_selector_json: editDetect.sheet_name ? { sheet_name: editDetect.sheet_name } : null,
+        header_row_index: editDetect.header_row_index,
+        data_start_row_index: editDetect.data_start_row_index,
+        field_aliases_json: editDetect.field_aliases as Record<string, string>,
+        amount_mode: editDetect.amount_mode,
+        amount_config_json: editDetect.amount_config as Record<string, string>,
+        date_formats_json: editDetect.date_formats as string[],
+        sample_file_id: data?.latest_version.sample_file_id ?? null
       });
       message.success('已创建新版本');
       setEditOpen(false);
+      setEditDetect(null);
       load(id);
     } catch (err) {
       message.error(err instanceof Error ? err.message : '创建失败');
@@ -160,11 +187,6 @@ export function BankTemplateDetailPage() {
           </Button>
           <h2 className="section-title">{data.name}</h2>
           <div className="toolbar-spacer" />
-          <Tooltip title={!canManage ? '权限不足' : undefined}>
-            <Button icon={<EditOutlined />} onClick={openEdit} disabled={!canManage}>
-              编辑（新版本）
-            </Button>
-          </Tooltip>
           <Button onClick={() => setHistoryOpen(true)}>版本历史</Button>
           <Tooltip title={!canManage ? '权限不足' : undefined}>
             <Button onClick={handleToggleStatus} disabled={!canManage}>
@@ -173,8 +195,7 @@ export function BankTemplateDetailPage() {
           </Tooltip>
         </div>
         <Descriptions size="small" column={2} bordered>
-          <Descriptions.Item label="模板ID">{data.id}</Descriptions.Item>
-          <Descriptions.Item label="公司">{data.company_id ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label="公司">{data.company_name ?? data.company_id ?? '-'}</Descriptions.Item>
           <Descriptions.Item label="银行名称">{data.bank_name ?? '-'}</Descriptions.Item>
           <Descriptions.Item label="银行账号">{data.bank_account_id ?? '-'}</Descriptions.Item>
           <Descriptions.Item label="状态">
@@ -183,10 +204,48 @@ export function BankTemplateDetailPage() {
           <Descriptions.Item label="最新版本">
             <VersionBadge version={v.version_no} />
           </Descriptions.Item>
+          <Descriptions.Item label="版本创建者">{v.created_by_name ?? v.created_by ?? '-'}</Descriptions.Item>
         </Descriptions>
       </Card>
-      <Card className="work-card" title={`配置详情 · v${v.version_no}`}>
-        <DetectResultView config={v} />
+      <Card
+        className="work-card"
+        title={`配置详情 · v${v.version_no}`}
+        extra={
+          editOpen ? (
+            <Space>
+              <Button type="primary" loading={editing} onClick={handleEditSubmit}>
+                保存（创建新版本）
+              </Button>
+              <Button onClick={() => { setEditOpen(false); setEditDetect(null); }}>
+                取消
+              </Button>
+            </Space>
+          ) : (
+            <Tooltip title={!canManage ? '权限不足' : undefined}>
+              <Button icon={<EditOutlined />} onClick={openEdit} disabled={!canManage}>
+                编辑
+              </Button>
+            </Tooltip>
+          )
+        }
+      >
+        {editOpen && editDetect ? (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Alert type="warning" showIcon message="修改将创建新版本，旧版本保留用于历史追溯。" />
+            <DetectResultView
+              config={editDetect}
+              onFieldAliasesChange={(next) =>
+                setEditDetect((prev) => (prev ? { ...prev, field_aliases: next } : prev))
+              }
+              standardFieldOptions={standardFields.options}
+            />
+          </Space>
+        ) : (
+          <DetectResultView
+            config={versionToConfigView(v)}
+            standardFieldOptions={standardFields.options}
+          />
+        )}
       </Card>
 
       <Card className="work-card" title="被引用情况">
@@ -226,40 +285,6 @@ export function BankTemplateDetailPage() {
           />
         )}
       </Card>
-
-      {/* 编辑（创建新版本）：用向导，回填当前版本配置作为起点 */}
-      <Modal
-        open={editOpen}
-        title="编辑模板（创建新版本）"
-        footer={null}
-        onCancel={() => setEditOpen(false)}
-        destroyOnHidden
-        width={680}
-      >
-        <div style={{ marginTop: 16 }}>
-          <BankTemplateWizard
-            onSubmit={handleEditSubmit}
-            onCancel={() => setEditOpen(false)}
-            submitting={editing}
-            skipUpload
-            initialValues={{
-              name: data.name,
-              bank_name: data.bank_name ?? undefined,
-              detect: {
-                file_type: v.file_type,
-                sheet_name: (v.sheet_selector_json as { sheet_name?: string } | null)?.sheet_name ?? '',
-                header_row_index: v.header_row_index ?? 0,
-                data_start_row_index: v.data_start_row_index ?? 1,
-                field_aliases: (v.field_aliases_json ?? {}) as Record<string, string>,
-                amount_mode: v.amount_mode,
-                amount_config: (v.amount_config_json ?? {}) as Record<string, string>,
-                date_formats: (v.date_formats_json ?? []) as string[]
-              },
-              sample_file_id: v.sample_file_id ?? undefined
-            }}
-          />
-        </div>
-      </Modal>
 
       <Modal
         open={historyOpen}

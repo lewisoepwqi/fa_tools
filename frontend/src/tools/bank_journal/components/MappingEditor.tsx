@@ -1,5 +1,5 @@
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import { Button, Input, Select, Space, Typography } from 'antd';
+import { Alert, Button, Input, Select, Space, Typography } from 'antd';
 import { FIELD_LABEL, STANDARD_FIELD_OPTIONS } from '../constants';
 
 /** 映射类型（对齐后端 mapping_service.apply_mappings 支持的全部 type）。 */
@@ -77,9 +77,12 @@ export function MappingEditor({
 
   return (
     <Space direction="vertical" size={8} style={{ width: '100%' }}>
-      <Typography.Text type="secondary">
-        把日记账的列，对应到银行流水的标准字段、规则输出或固定值：
-      </Typography.Text>
+      <Alert
+        type="info"
+        showIcon
+        message="日记账列 ← 来源"
+        description="左侧选择日记账的输出列，右侧配置该列的取值来源（银行流水字段 / 规则输出 / 固定值等）。"
+      />
       {value.map((entry, i) => (
         <MappingRow
           key={i}
@@ -119,48 +122,53 @@ function MappingRow({
   onPatch: (p: Partial<MappingEntry>) => void;
   onRemove: () => void;
 }) {
+  // 目标列始终用 Select（有 targetOptions 从日记账模板列名选；无则 showSearch 自由输入），
+  // 保持与"来源"侧一致的交互——两端都是模板字段映射，都应选择。
+  const targetSelectOptions = targetOptions
+    ? targetOptions.map((t) => ({ value: t, label: t }))
+    : entry.target
+      ? [{ value: entry.target, label: entry.target }]
+      : [];
   return (
-    <Space direction="vertical" size={4} style={{ width: '100%' }}>
-      <Space.Compact style={{ width: '100%' }}>
-        {/* 目标列：有 targetOptions 走下拉，否则自由输入 */}
-        {targetOptions ? (
+    <div
+      style={{
+        border: '1px solid var(--ant-color-border, #d9d9d9)',
+        borderRadius: 6,
+        padding: 12,
+      }}
+    >
+      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+        <Space.Compact style={{ width: '100%' }}>
           <Select
             style={{ width: '40%' }}
             value={entry.target || undefined}
             placeholder="选择日记账列"
             showSearch
             allowClear
-            options={targetOptions.map((t) => ({ value: t, label: t }))}
+            options={targetSelectOptions}
             onChange={(v) => onTarget(v ?? '')}
           />
-        ) : (
-          <Input
-            style={{ width: '40%' }}
-            value={entry.target}
-            placeholder="日记账列名（如：日期）"
-            onChange={(e) => onTarget(e.target.value)}
+          <Select
+            style={{ width: '48%' }}
+            value={entry.type}
+            options={MAPPING_TYPE_OPTIONS}
+            onChange={(t) => onType(t)}
           />
-        )}
-        <Select
-          style={{ width: '28%' }}
-          value={entry.type}
-          options={MAPPING_TYPE_OPTIONS}
-          onChange={(t) => onType(t)}
+          <Button
+            icon={<DeleteOutlined />}
+            onClick={onRemove}
+            danger
+            style={{ width: '12%' }}
+          />
+        </Space.Compact>
+        <MappingSourceControl
+          entry={entry}
+          ruleOutputOptions={ruleOutputOptions}
+          fieldOptions={fieldOptions}
+          onPatch={onPatch}
         />
-        <Button
-          icon={<DeleteOutlined />}
-          onClick={onRemove}
-          danger
-          style={{ width: '12%' }}
-        />
-      </Space.Compact>
-      <MappingSourceControl
-        entry={entry}
-        ruleOutputOptions={ruleOutputOptions}
-        fieldOptions={fieldOptions}
-        onPatch={onPatch}
-      />
-    </Space>
+      </Space>
+    </div>
   );
 }
 

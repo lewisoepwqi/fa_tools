@@ -12,6 +12,10 @@ class MappingProfileVersionCreate(BaseModel):
 
 class MappingProfileVersionResponse(MappingProfileVersionCreate):
     version_no: int
+    # 展示名（联表解析，供前端直接显示，避免裸 ID）
+    created_by_name: str | None = None
+    bank_template_version_no: int | None = None
+    company_journal_template_version_no: int | None = None
 
 
 class MappingProfileCreate(BaseModel):
@@ -25,6 +29,7 @@ class MappingProfileCreate(BaseModel):
 class MappingProfileResponse(BaseModel):
     id: str
     company_id: str
+    company_name: str | None = None
     name: str
     bank_template_id: str | None = None
     company_journal_template_id: str | None = None

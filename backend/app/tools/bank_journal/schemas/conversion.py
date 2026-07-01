@@ -28,6 +28,18 @@ class BankParseConfig(BaseModel):
     date_formats: list[str]
 
 
+class SourceFileRef(BaseModel):
+    """源文件引用（可携带该文件本次使用的工作表名）。
+
+    sheet 名是文件级属性——同一银行不同月份导出的工作表名可能不同，
+    故不钉死在模板上，而由用户上传后逐文件选择。sheet_name 缺失时
+    回退到模板默认值或文件首个工作表（见 conversion_service）。
+    """
+
+    file_id: str
+    sheet_name: str | None = None
+
+
 class ConversionRunCreate(BaseModel):
     company_id: str
     bank_account_id: str
@@ -41,6 +53,9 @@ class ConversionRunCreate(BaseModel):
     bank_template_version_id: str | None = None
     company_journal_template_version_id: str | None = None
     mapping_profile_version_id: str | None = None
+    # 每文件可选的工作表覆盖。优先级高于 bank_parse_config.sheet_name
+    # （后者降级为模板默认值）。为空时全部用 bank_parse_config.sheet_name。
+    source_files: list[SourceFileRef] | None = None
 
 
 class ConversionRunFromConfigCreate(BaseModel):
@@ -64,6 +79,9 @@ class ConversionRunFromConfigCreate(BaseModel):
     mapping_profile_id: str | None = None
     rule_ids: list[str] = []
     required_columns: list[str] = []
+    # 每文件可选的工作表覆盖。sheet 名是文件级属性，不应钉死在模板上；
+    # 缺失时回退到模板 sheet_selector_json 默认值或文件首个工作表。
+    source_files: list[SourceFileRef] | None = None
 
 
 class DryRunCreate(ConversionRunFromConfigCreate):

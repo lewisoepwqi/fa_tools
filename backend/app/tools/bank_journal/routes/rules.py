@@ -16,9 +16,12 @@ from app.api.deps import (
 )
 from app.core.enums import RecordStatus
 from app.core.permissions import Permission
+from app.models.company import Company
+from app.models.user import User
 from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.models.conversion import ConversionRunRuleVersion
 from app.tools.bank_journal.models.rule import Rule, RuleVersion
+from app.tools.bank_journal.models.template import BankTemplate, CompanyJournalTemplate
 from app.tools.bank_journal.schemas.pagination import Page
 from app.tools.bank_journal.schemas.rule import (
     RuleCreate,
@@ -77,7 +80,7 @@ def create_rule(
     db.commit()
     db.refresh(parent)
     db.refresh(version)
-    response = _to_response(parent, version)
+    response = _to_response(db, parent, version)
     record_audit_event(
         db,
         company_id=response.company_id,
@@ -167,7 +170,7 @@ def list_rules(
     )
     by_parent = {v.rule_id: v for v in versions}
     return Page[RuleResponse](
-        items=[_to_response(p, by_parent.get(p.id)) for p in parents],
+        items=[_to_response(db, p, by_parent.get(p.id)) for p in parents],
         total=total,
         limit=limit,
         offset=offset,
@@ -184,7 +187,7 @@ def get_rule(db: DbSession, user: CurrentUserDep, rule_id: str) -> RuleResponse:
     parent = _get_rule_or_404(db, rule_id)
     require_company_access(user, parent.company_id)  # 跨公司读取拦截
     latest = _latest_rule_version(db, rule_id)
-    return _to_response(parent, latest)
+    return _to_response(db, parent, latest)
 
 
 @router.post(
@@ -219,7 +222,7 @@ def create_rule_version(
     db.commit()
     db.refresh(parent)
     db.refresh(version)
-    response = _to_response(parent, version)
+    response = _to_response(db, parent, version)
     record_audit_event(
         db,
         company_id=response.company_id,
@@ -287,7 +290,7 @@ def update_rule_status(
     db.commit()
     db.refresh(parent)
     latest = _latest_rule_version(db, rule_id)
-    response = _to_response(parent, latest)
+    response = _to_response(db, parent, latest)
     record_audit_event(
         db,
         company_id=response.company_id,
@@ -341,7 +344,7 @@ def delete_rule(
             detail=f"该规则已被 {run_count} 个转换批次引用，无法删除（需保留历史可追溯）。",
         )
 
-    before = _to_response(parent, _latest_rule_version(db, rule_id))
+    before = _to_response(db, parent, _latest_rule_version(db, rule_id))
     parent.status = RecordStatus.DELETED.value
     db.commit()
     db.refresh(parent)
@@ -436,13 +439,15 @@ def _latest_rule_version(db: DbSession, rule_id: str) -> RuleVersion | None:
     )
 
 
-def _to_response(parent: Rule, version: RuleVersion | None) -> RuleResponse:
+def _to_response(db: DbSession, parent: Rule, version: RuleVersion | None) -> RuleResponse:
     return RuleResponse(
         id=parent.id,
         company_id=parent.company_id,
+        company_name=_company_name(db, parent.company_id),
         name=parent.name,
         scope_type=parent.scope_type,
         scope_id=parent.scope_id,
+        scope_name=_scope_name(db, parent.scope_type, parent.scope_id),
         status=parent.status,
         latest_version=RuleVersionResponse(
             version_no=version.version_no,
@@ -451,5 +456,44 @@ def _to_response(parent: Rule, version: RuleVersion | None) -> RuleResponse:
             actions_json=version.actions_json,
             allow_auto_confirm=version.allow_auto_confirm,
             created_by=version.created_by,
+            created_by_name=_user_name(db, version.created_by),
         ),
     )
+
+
+def _company_name(db: DbSession, company_id: str | None) -> str | None:
+    if not company_id:
+        return None
+    c = db.get(Company, company_id)
+    return c.name if c else None
+
+
+def _user_name(db: DbSession, user_id: str | None) -> str | None:
+    if not user_id:
+        return None
+    u = db.get(User, user_id)
+    if u is None:
+        return None
+    return u.name or u.email
+
+
+def _scope_name(db: DbSession, scope_type: str | None, scope_id: str | None) -> str | None:
+    """按 scope_type 联表解析作用域显示名（避免裸 ID）。
+
+    - company → 公司名
+    - bank_template → 银行模板名
+    - journal_template → 日记账模板名
+    - 全局/未知 → None
+    """
+    if not scope_type or not scope_id:
+        return None
+    if scope_type == "company":
+        c = db.get(Company, scope_id)
+        return c.name if c else None
+    if scope_type == "bank_template":
+        t = db.get(BankTemplate, scope_id)
+        return t.name if t else None
+    if scope_type in ("journal_template", "company_journal_template"):
+        t = db.get(CompanyJournalTemplate, scope_id)
+        return t.name if t else None
+    return None

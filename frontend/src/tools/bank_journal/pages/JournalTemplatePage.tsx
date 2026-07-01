@@ -1,5 +1,5 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Button, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tooltip, Typography } from 'antd';
+import { Button, Modal, Popconfirm, Space, Switch, Table, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -11,14 +11,12 @@ import {
   listJournalTemplates,
   setJournalTemplateStatus
 } from '../api/journalTemplates';
+import { columnsToBackend } from '../components/JournalColumnsEditor';
 import {
-  JournalColumnsEditor,
-  columnsFromBackend,
-  columnsToBackend,
-  type JournalColumn
-} from '../components/JournalColumnsEditor';
+  JournalTemplateWizard,
+  type JournalTemplateWizardValues
+} from '../components/JournalTemplateWizard';
 import { VersionBadge } from '../components/VersionBadge';
-import { FILE_TYPE_OPTIONS } from '../constants';
 import type { JournalTemplate } from '../types/templates';
 
 export function JournalTemplatePage() {
@@ -32,13 +30,6 @@ export function JournalTemplatePage() {
   const [creating, setCreating] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const navigate = useNavigate();
-
-  const [name, setName] = useState('');
-  const [fileType, setFileType] = useState('xlsx');
-  const [sheetName, setSheetName] = useState('日记账');
-  const [columns, setColumns] = useState<JournalColumn[]>(
-    columnsFromBackend(['日期', '摘要', '科目', '金额'], ['日期', '科目', '金额'])
-  );
 
   const load = () => {
     setLoading(true);
@@ -78,33 +69,28 @@ export function JournalTemplatePage() {
   }, [page, pageSize, currentCompanyId]);
 
   const openCreate = () => {
-    setName('');
-    setFileType('xlsx');
-    setSheetName('日记账');
-    setColumns(columnsFromBackend(['日期', '摘要', '科目', '金额'], ['日期', '科目', '金额']));
     setModalOpen(true);
   };
 
-  const handleCreate = async () => {
-    if (!name.trim()) {
-      message.error('请输入模板名称');
-      return;
-    }
+  const handleCreate = async (values: JournalTemplateWizardValues) => {
     if (!currentCompanyId) {
       message.error('请先在右上角选择公司');
       return;
     }
     setCreating(true);
     try {
-      const { columns_json, required_columns_json } = columnsToBackend(columns);
+      const { columns_json, required_columns_json } = columnsToBackend(values.columns);
       await createJournalTemplate({
         company_id: currentCompanyId,
-        name,
+        name: values.name,
         version: {
-          file_type: fileType,
-          sheet_name: sheetName,
+          file_type: values.detect.file_type,
+          sheet_name: values.detect.sheet_name || undefined,
+          header_row_index: values.detect.header_row_index,
+          data_start_row_index: values.detect.data_start_row_index,
           columns_json,
-          required_columns_json
+          required_columns_json,
+          sample_file_id: values.sample_file_id ?? undefined
         }
       });
       message.success('模板已创建');
@@ -251,40 +237,17 @@ export function JournalTemplatePage() {
       <Modal
         open={modalOpen}
         title="新建日记账模板"
-        okText="创建"
-        cancelText="取消"
-        confirmLoading={creating}
-        onOk={handleCreate}
+        footer={null}
         onCancel={() => setModalOpen(false)}
         destroyOnHidden
         width={680}
       >
-        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div>
-            <Typography.Text strong>模板名称</Typography.Text>
-            <Input style={{ marginTop: 4 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="如：标准日记账模板" />
-          </div>
-          <div style={{ display: 'flex', gap: 16 }}>
-            <div style={{ flex: 1 }}>
-              <Typography.Text strong>文件类型</Typography.Text>
-              <Select
-                style={{ width: '100%', marginTop: 4 }}
-                value={fileType}
-                onChange={setFileType}
-                options={FILE_TYPE_OPTIONS}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <Typography.Text strong>工作表名</Typography.Text>
-              <Input style={{ marginTop: 4 }} value={sheetName} onChange={(e) => setSheetName(e.target.value)} placeholder="如：日记账" />
-            </div>
-          </div>
-          <div>
-            <Typography.Text strong>输出列配置</Typography.Text>
-            <div style={{ marginTop: 4 }}>
-              <JournalColumnsEditor value={columns} onChange={setColumns} />
-            </div>
-          </div>
+        <div style={{ marginTop: 16 }}>
+          <JournalTemplateWizard
+            onSubmit={handleCreate}
+            onCancel={() => setModalOpen(false)}
+            submitting={creating}
+          />
         </div>
       </Modal>
     </div>

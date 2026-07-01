@@ -76,3 +76,23 @@ export async function detectBankTemplate(
   );
   return response.data;
 }
+
+/** 已上传文件的工作表列表（供「上传后选 sheet」能力使用）。CSV/XLS 返回空数组。 */
+export interface SourceFileSheetsResponse {
+  file_id: string;
+  sheets: string[];
+}
+
+/**
+ * 列出已上传文件的工作表名。
+ *
+ * 每个文件的 sheet 名不同（"明细"/"交易流水"/"Sheet1"），转换前需让用户
+ * 看到该文件有哪些 sheet 可选。CSV / XLS 等无工作表概念的文件返回空数组，
+ * 前端据此隐藏选择器。
+ */
+export async function listSourceFileSheets(fileId: string): Promise<SourceFileSheetsResponse> {
+  const response = await apiClient.get<SourceFileSheetsResponse>(
+    `/api/tools/bank-journal/bank-templates/source-files/${fileId}/sheets`
+  );
+  return response.data;
+}

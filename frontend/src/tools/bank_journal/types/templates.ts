@@ -13,11 +13,15 @@ export interface BankTemplateVersion {
   unique_key_config_json?: Record<string, unknown> | null;
   sample_file_id?: string | null;
   created_by?: string | null;
+  /** 展示名（后端联表解析，供直接显示，避免裸 ID）。 */
+  created_by_name?: string | null;
+  sample_file_name?: string | null;
 }
 
 export interface BankTemplate {
   id: string;
   company_id?: string | null;
+  company_name?: string | null;
   name: string;
   bank_name?: string | null;
   bank_account_id?: string | null;
@@ -36,11 +40,15 @@ export interface JournalTemplateVersion {
   format_rules_json?: Record<string, unknown> | null;
   sample_file_id?: string | null;
   created_by?: string | null;
+  /** 展示名（后端联表解析，供直接显示，避免裸 ID）。 */
+  created_by_name?: string | null;
+  sample_file_name?: string | null;
 }
 
 export interface JournalTemplate {
   id: string;
   company_id: string;
+  company_name?: string | null;
   name: string;
   status: string;
   latest_version: JournalTemplateVersion;

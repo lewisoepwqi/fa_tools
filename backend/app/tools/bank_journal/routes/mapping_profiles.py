@@ -13,9 +13,15 @@ from app.api.deps import (
 )
 from app.core.enums import RecordStatus
 from app.core.permissions import Permission
+from app.models.company import Company
+from app.models.user import User
 from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.models.conversion import ConversionRun
 from app.tools.bank_journal.models.mapping import MappingProfile, MappingProfileVersion
+from app.tools.bank_journal.models.template import (
+    BankTemplateVersion,
+    CompanyJournalTemplateVersion,
+)
 from app.tools.bank_journal.schemas.mapping import (
     MappingProfileCreate,
     MappingProfileResponse,
@@ -66,7 +72,7 @@ def create_mapping_profile(
     db.commit()
     db.refresh(parent)
     db.refresh(version)
-    response = _to_response(parent, version)
+    response = _to_response(db, parent, version)
     record_audit_event(
         db,
         company_id=response.company_id,
@@ -144,7 +150,7 @@ def list_mapping_profiles(
     )
     by_parent = {v.mapping_profile_id: v for v in versions}
     return Page[MappingProfileResponse](
-        items=[_to_response(p, by_parent.get(p.id)) for p in parents],
+        items=[_to_response(db, p, by_parent.get(p.id)) for p in parents],
         total=total,
         limit=limit,
         offset=offset,
@@ -163,7 +169,7 @@ def get_mapping_profile(
     parent = _get_mapping_profile_or_404(db, profile_id)
     require_company_access(user, parent.company_id)  # 跨公司读取拦截
     latest = _latest_mapping_version(db, profile_id)
-    return _to_response(parent, latest)
+    return _to_response(db, parent, latest)
 
 
 @router.post(
@@ -197,7 +203,7 @@ def create_mapping_profile_version(
     db.commit()
     db.refresh(parent)
     db.refresh(version)
-    response = _to_response(parent, version)
+    response = _to_response(db, parent, version)
     record_audit_event(
         db,
         company_id=response.company_id,
@@ -228,7 +234,7 @@ def list_mapping_profile_versions(
         .order_by(MappingProfileVersion.version_no.desc())
         .all()
     )
-    return [_version_to_response(version) for version in versions]
+    return [_version_to_response(db, version) for version in versions]
 
 
 @router.patch(
@@ -255,7 +261,7 @@ def update_mapping_profile_status(
     db.commit()
     db.refresh(parent)
     latest = _latest_mapping_version(db, profile_id)
-    response = _to_response(parent, latest)
+    response = _to_response(db, parent, latest)
     record_audit_event(
         db,
         company_id=response.company_id,
@@ -307,7 +313,7 @@ def delete_mapping_profile(
             detail=f"该映射方案已被 {run_count} 个转换批次引用，无法删除（需保留历史可追溯）。",
         )
 
-    before = _to_response(parent, _latest_mapping_version(db, profile_id))
+    before = _to_response(db, parent, _latest_mapping_version(db, profile_id))
     parent.status = RecordStatus.DELETED.value
     db.commit()
     db.refresh(parent)
@@ -342,22 +348,32 @@ def _latest_mapping_version(db: DbSession, profile_id: str) -> MappingProfileVer
     )
 
 
-def _version_to_response(version: MappingProfileVersion) -> MappingProfileVersionResponse:
+def _version_to_response(
+    db: DbSession, version: MappingProfileVersion
+) -> MappingProfileVersionResponse:
     return MappingProfileVersionResponse(
         version_no=version.version_no,
         bank_template_version_id=version.bank_template_version_id,
         company_journal_template_version_id=version.company_journal_template_version_id,
         mappings_json=version.mappings_json,
         created_by=version.created_by,
+        created_by_name=_user_name(db, version.created_by),
+        bank_template_version_no=_template_version_no(
+            db, BankTemplateVersion, version.bank_template_version_id
+        ),
+        company_journal_template_version_no=_template_version_no(
+            db, CompanyJournalTemplateVersion, version.company_journal_template_version_id
+        ),
     )
 
 
 def _to_response(
-    parent: MappingProfile, version: MappingProfileVersion | None
+    db: DbSession, parent: MappingProfile, version: MappingProfileVersion | None
 ) -> MappingProfileResponse:
     return MappingProfileResponse(
         id=parent.id,
         company_id=parent.company_id,
+        company_name=_company_name(db, parent.company_id),
         name=parent.name,
         bank_template_id=parent.bank_template_id,
         company_journal_template_id=parent.company_journal_template_id,
@@ -368,5 +384,36 @@ def _to_response(
             company_journal_template_version_id=version.company_journal_template_version_id,
             mappings_json=version.mappings_json,
             created_by=version.created_by,
+            created_by_name=_user_name(db, version.created_by),
+            bank_template_version_no=_template_version_no(
+                db, BankTemplateVersion, version.bank_template_version_id
+            ),
+            company_journal_template_version_no=_template_version_no(
+                db, CompanyJournalTemplateVersion, version.company_journal_template_version_id
+            ),
         ),
     )
+
+
+def _company_name(db: DbSession, company_id: str | None) -> str | None:
+    if not company_id:
+        return None
+    c = db.get(Company, company_id)
+    return c.name if c else None
+
+
+def _user_name(db: DbSession, user_id: str | None) -> str | None:
+    if not user_id:
+        return None
+    u = db.get(User, user_id)
+    if u is None:
+        return None
+    return u.name or u.email
+
+
+def _template_version_no(db: DbSession, model, version_id: str | None) -> int | None:
+    """按版本 id 查 version_no（避免裸 UUID）。model 为版本表 ORM 类。"""
+    if not version_id:
+        return None
+    v = db.get(model, version_id)
+    return v.version_no if v else None

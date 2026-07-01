@@ -16,6 +16,8 @@ from app.tools.bank_journal.services.parser_service import (
     _read_rows,
     detect_bank_template_config,
     detect_header_row,
+    detect_journal_template_config,
+    list_xlsx_sheets,
     parse_bank_rows,
     parse_bank_statement,
 )
@@ -513,3 +515,126 @@ def test_parse_amounts_negative_income_flags_anomaly():
     assert sa.direction == TransactionDirection.DEBIT
     assert sa.net_amount == Decimal("-50")
     assert sa.sign_anomaly is True
+
+
+# ---------------------------------------------------------------------------
+# 列出文件工作表（list_xlsx_sheets）——供「上传后选 sheet」能力使用
+# ---------------------------------------------------------------------------
+
+
+def test_list_xlsx_sheets_returns_all_sheet_names(tmp_path: Path) -> None:
+    """xlsx 文件返回全部工作表名（按文件内顺序）。"""
+    fixture = tmp_path / "multi_sheet.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "明细"
+    workbook.create_sheet("交易流水")
+    workbook.create_sheet("汇总")
+    workbook.save(fixture)
+
+    assert list_xlsx_sheets(fixture) == ["明细", "交易流水", "汇总"]
+
+
+def test_list_xlsx_sheets_for_nonexistent_file_returns_empty(tmp_path: Path) -> None:
+    """文件不存在时返回空列表（不抛错，让调用方静默处理）。"""
+    assert list_xlsx_sheets(tmp_path / "no_such_file.xlsx") == []
+
+
+def test_list_xlsx_sheets_for_csv_returns_empty(tmp_path: Path) -> None:
+    """CSV 无工作表概念，返回空列表。"""
+    fixture = tmp_path / "plain.csv"
+    fixture.write_text("交易日期,收入\n2026-06-01,100\n", encoding="utf-8")
+
+    assert list_xlsx_sheets(fixture) == []
+
+
+def test_list_xlsx_sheets_for_default_single_sheet(tmp_path: Path) -> None:
+    """单工作表文件返回包含该项的单元素列表。"""
+    fixture = Path(__file__).parents[1] / "fixtures" / "bank_statement_basic.xlsx"
+    sheets = list_xlsx_sheets(fixture)
+    assert len(sheets) >= 1
+    # fixture 工作表名应为 Sheet1（openpyxl 默认）
+    assert "Sheet1" in sheets
+
+
+# ---------------------------------------------------------------------------
+# 日记账模板 detect（detect_journal_template_config）
+# ---------------------------------------------------------------------------
+
+
+def test_detect_journal_template_config_from_csv(tmp_path: Path) -> None:
+    """从日记账样本 CSV 识别表头行与列名。"""
+    fixture = tmp_path / "journal_sample.csv"
+    fixture.write_text(
+        "凭证号,日期,摘要,科目,借方,贷方,余额\n"
+        "记-001,2026-07-01,收客户货款,银行存款,12000,,12000\n",
+        encoding="utf-8",
+    )
+
+    detected = detect_journal_template_config(fixture, "csv")
+
+    assert detected["file_type"] == "csv"
+    assert detected["header_row_index"] == 0
+    assert detected["data_start_row_index"] == 1
+    assert detected["columns"] == ["凭证号", "日期", "摘要", "科目", "借方", "贷方", "余额"]
+    # 惯例必填列（与识别出的列取交集）
+    assert "日期" in detected["required_columns"]
+    assert "科目" in detected["required_columns"]
+
+
+def test_detect_journal_template_config_skips_title_row(tmp_path: Path) -> None:
+    """首行是标题（"XX公司日记账"），表头应在第 1 行。"""
+    fixture = tmp_path / "journal_with_title.csv"
+    fixture.write_text(
+        "某某公司日记账\n"
+        "凭证号,日期,摘要,科目,金额\n"
+        "记-001,2026-07-01,收客户货款,银行存款,12000\n",
+        encoding="utf-8",
+    )
+
+    detected = detect_journal_template_config(fixture, "csv")
+
+    assert detected["header_row_index"] == 1
+    assert detected["data_start_row_index"] == 2
+    assert detected["columns"] == ["凭证号", "日期", "摘要", "科目", "金额"]
+
+
+def test_detect_journal_template_config_from_xlsx(tmp_path: Path) -> None:
+    """从日记账样本 xlsx 识别表头与列名（含工作表名）。"""
+    fixture = tmp_path / "journal_sample.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "日记账"
+    sheet.append(["日期", "摘要", "科目", "金额"])
+    sheet.append(["2026-07-01", "货款", "银行存款", "12000"])
+    workbook.save(fixture)
+
+    detected = detect_journal_template_config(fixture, "xlsx")
+
+    assert detected["file_type"] == "xlsx"
+    assert detected["sheet_name"] == "日记账"
+    assert detected["columns"] == ["日期", "摘要", "科目", "金额"]
+
+
+def test_detect_journal_template_config_required_columns_intersection(tmp_path: Path) -> None:
+    """必填列推断只保留与识别列名的交集（样本没有的列不强加）。"""
+    fixture = tmp_path / "journal_partial.csv"
+    fixture.write_text("日期,摘要,金额\n2026-07-01,货款,12000\n", encoding="utf-8")
+
+    detected = detect_journal_template_config(fixture, "csv")
+
+    # 样本无"科目"列 → required_columns 不应包含它
+    assert "日期" in detected["required_columns"]
+    assert "金额" in detected["required_columns"]
+    assert "科目" not in detected["required_columns"]
+
+
+def test_detect_header_row_uses_default_keywords_when_unspecified() -> None:
+    """detect_header_row 不传 keywords 时仍用银行默认关键词（保持向后兼容）。"""
+    # 银行流水表头
+    rows = [
+        ["交易日期", "收入", "支出", "余额"],
+        ["2026-06-01", "100", "", "100"],
+    ]
+    # 不传 keywords，应识别第 0 行（银行关键词命中）
+    assert detect_header_row(rows) == 0
+

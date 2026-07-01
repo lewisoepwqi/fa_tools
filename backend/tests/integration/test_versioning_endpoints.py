@@ -353,3 +353,53 @@ def test_list_rules_ordered_by_priority_asc(client) -> None:
     ordered = [it for it in items if it["id"] in ids_created]
     priorities = [it["latest_version"]["priority"] for it in ordered]
     assert priorities == [1, 2, 3], f"期望按 priority 升序 [1,2,3]，实际: {priorities}"
+
+
+# ---------------------------------------------------------------------------
+# 数据完整性：模板父行存在但无版本（_latest_* 返回 None）
+#
+# 正常流程不会出现（create 时同步建 v1），但若 DB 异常/手工删除版本，
+# GET /{id} 不应因 version.version_no 解引用崩溃成 500，而应返回清晰 404。
+# ---------------------------------------------------------------------------
+
+
+def test_bank_template_without_version_returns_404(client_with_db, admin_auth) -> None:
+    """银行模板存在但无任何版本 → GET 返回 404（而非 500 AttributeError）。"""
+    client, db = client_with_db
+    from app.tools.bank_journal.models.template import BankTemplate
+
+    parent = BankTemplate(
+        id="bt-no-version",
+        company_id="company-1",
+        name="无版本模板",
+        status="active",
+    )
+    db.add(parent)
+    db.commit()
+
+    resp = client.get(
+        "/api/tools/bank-journal/bank-templates/bt-no-version", headers=admin_auth
+    )
+    assert resp.status_code == 404
+    assert "no version" in resp.json()["detail"]
+
+
+def test_journal_template_without_version_returns_404(client_with_db, admin_auth) -> None:
+    """日记账模板存在但无任何版本 → GET 返回 404（而非 500 AttributeError）。"""
+    client, db = client_with_db
+    from app.tools.bank_journal.models.template import CompanyJournalTemplate
+
+    parent = CompanyJournalTemplate(
+        id="cjt-no-version",
+        company_id="company-1",
+        name="无版本日记账模板",
+        status="active",
+    )
+    db.add(parent)
+    db.commit()
+
+    resp = client.get(
+        "/api/tools/bank-journal/journal-templates/cjt-no-version", headers=admin_auth
+    )
+    assert resp.status_code == 404
+    assert "no version" in resp.json()["detail"]

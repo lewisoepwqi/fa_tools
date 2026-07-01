@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.deps import (
@@ -7,7 +9,9 @@ from app.api.deps import (
     require,
     require_company_access,
 )
+from app.core.config import get_settings
 from app.core.permissions import Permission
+from app.models.file import SourceFile
 from app.services.audit_service import audit_ctx, record_audit_event
 from app.tools.bank_journal.models.conversion import ConversionRun
 from app.tools.bank_journal.models.mapping import MappingProfile
@@ -18,8 +22,11 @@ from app.tools.bank_journal.schemas.template import (
     CompanyJournalTemplateResponse,
     CompanyJournalTemplateVersionCreate,
     CompanyJournalTemplateVersionResponse,
+    JournalTemplateDetectRequest,
+    JournalTemplateDetectResponse,
 )
 from app.tools.bank_journal.services import template_service
+from app.tools.bank_journal.services.parser_service import detect_journal_template_config
 
 router = APIRouter(
     prefix="/api/tools/bank-journal/journal-templates", tags=["journal-templates"]
@@ -51,6 +58,39 @@ def create_journal_template(
         **audit_ctx(request),
     )
     return response
+
+
+@router.post(
+    "/detect",
+    response_model=JournalTemplateDetectResponse,
+    dependencies=[Depends(require(Permission.TEMPLATE_MANAGE))],
+)
+def detect_journal_template(
+    db: DbSession, user: CurrentUserDep, payload: JournalTemplateDetectRequest
+) -> JournalTemplateDetectResponse:
+    """从已上传的日记账样本文件自动识别表头行与列名（对齐银行模板 detect 体验）。
+
+    日记账 detect 比银行简单：列名即输出列名本身，无需字段别名/金额模式。
+    """
+    source = db.query(SourceFile).filter(SourceFile.id == payload.source_file_id).first()
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Source file not found: {payload.source_file_id}",
+        )
+    require_company_access(user, source.company_id)  # 跨公司读取拦截
+    file_path = Path(get_settings().upload_dir) / source.storage_key
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source file not found on disk",
+        )
+    detected = detect_journal_template_config(
+        file_path,
+        source.file_type,
+        payload.sheet_name or "",
+    )
+    return JournalTemplateDetectResponse(**detected)
 
 
 @router.get(
