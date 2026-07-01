@@ -23,6 +23,13 @@ export async function getConversionRun(runId: string): Promise<ConversionRunResp
 /**
  * P0：用已配置的版本化模板/映射/规则驱动转换（真正读取用户配置）。
  */
+export interface SourceFileRef {
+  /** 源文件 ID。 */
+  file_id: string;
+  /** 该文件本次使用的工作表名（xlsx 多 sheet 时由用户逐文件选择）。 */
+  sheet_name: string;
+}
+
 export interface ConversionRunFromConfigPayload {
   company_id: string;
   source_file_ids: string[];
@@ -30,6 +37,8 @@ export interface ConversionRunFromConfigPayload {
   company_journal_template_id?: string;
   mapping_profile_id?: string;
   rule_ids?: string[];
+  /** 每文件可选的工作表覆盖。缺省时由后端按模板默认/文件首个 sheet 解析。 */
+  source_files?: SourceFileRef[];
 }
 
 export async function createConversionRunFromConfig(
@@ -44,7 +53,10 @@ export async function createConversionRunFromConfig(
       bank_template_id: payload.bank_template_id,
       company_journal_template_id: payload.company_journal_template_id,
       mapping_profile_id: payload.mapping_profile_id,
-      rule_ids: payload.rule_ids ?? []
+      rule_ids: payload.rule_ids ?? [],
+      ...(payload.source_files && payload.source_files.length > 0
+        ? { source_files: payload.source_files }
+        : {})
     }
   );
   return response.data;
@@ -79,7 +91,10 @@ export async function dryRunConversion(
       company_journal_template_id: payload.company_journal_template_id,
       mapping_profile_id: payload.mapping_profile_id,
       rule_ids: payload.rule_ids ?? [],
-      limit: payload.limit ?? 20
+      limit: payload.limit ?? 20,
+      ...(payload.source_files && payload.source_files.length > 0
+        ? { source_files: payload.source_files }
+        : {})
     }
   );
   return response.data;

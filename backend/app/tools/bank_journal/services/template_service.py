@@ -7,6 +7,9 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.enums import RecordStatus
+from app.models.company import Company
+from app.models.file import SourceFile
+from app.models.user import User
 from app.tools.bank_journal.models.template import (
     BankTemplate,
     BankTemplateVersion,
@@ -60,7 +63,7 @@ def create_bank_template(db: Session, payload: BankTemplateCreate) -> BankTempla
     db.commit()
     db.refresh(parent)
     db.refresh(version)
-    return _bank_template_to_response(parent, version)
+    return _bank_template_to_response(db, parent, version)
 
 
 def list_bank_templates(
@@ -109,7 +112,7 @@ def list_bank_templates(
     )
     by_parent = {v.bank_template_id: v for v in versions}
     return Page[BankTemplateResponse](
-        items=[_bank_template_to_response(p, by_parent.get(p.id)) for p in parents],
+        items=[_bank_template_to_response(db, p, by_parent.get(p.id)) for p in parents],
         total=total,
         limit=limit,
         offset=offset,
@@ -120,7 +123,7 @@ def get_bank_template(db: Session, template_id: str) -> BankTemplateResponse:
     """按 id 加载银行模板（含最新版本）。不存在则 404。"""
     parent = _get_bank_template_or_404(db, template_id)
     latest = _latest_bank_template_version(db, template_id)
-    return _bank_template_to_response(parent, latest)
+    return _bank_template_to_response(db, parent, latest)
 
 
 def soft_delete_bank_template(db: Session, template_id: str):
@@ -159,7 +162,7 @@ def create_bank_template_version(
     db.commit()
     db.refresh(parent)
     db.refresh(version)
-    return _bank_template_to_response(parent, version)
+    return _bank_template_to_response(db, parent, version)
 
 
 def list_bank_template_versions(
@@ -173,7 +176,7 @@ def list_bank_template_versions(
         .order_by(BankTemplateVersion.version_no.desc())
         .all()
     )
-    return [_bank_template_version_to_response(version) for version in versions]
+    return [_bank_template_version_to_response(db, version) for version in versions]
 
 
 def set_bank_template_status(
@@ -186,7 +189,7 @@ def set_bank_template_status(
     db.commit()
     db.refresh(parent)
     latest = _latest_bank_template_version(db, template_id)
-    return _bank_template_to_response(parent, latest)
+    return _bank_template_to_response(db, parent, latest)
 
 
 def _get_bank_template_or_404(db: Session, template_id: str) -> BankTemplate:
@@ -248,7 +251,7 @@ def create_journal_template(
     db.commit()
     db.refresh(parent)
     db.refresh(version)
-    return _journal_template_to_response(parent, version)
+    return _journal_template_to_response(db, parent, version)
 
 
 def list_journal_templates(
@@ -298,7 +301,7 @@ def list_journal_templates(
     )
     by_parent = {v.company_journal_template_id: v for v in versions}
     return Page[CompanyJournalTemplateResponse](
-        items=[_journal_template_to_response(p, by_parent.get(p.id)) for p in parents],
+        items=[_journal_template_to_response(db, p, by_parent.get(p.id)) for p in parents],
         total=total,
         limit=limit,
         offset=offset,
@@ -311,7 +314,7 @@ def get_journal_template(
     """按 id 加载日记账模板（含最新版本）。不存在则 404。"""
     parent = _get_journal_template_or_404(db, template_id)
     latest = _latest_journal_template_version(db, template_id)
-    return _journal_template_to_response(parent, latest)
+    return _journal_template_to_response(db, parent, latest)
 
 
 def soft_delete_journal_template(db: Session, template_id: str):
@@ -348,7 +351,7 @@ def create_journal_template_version(
     db.commit()
     db.refresh(parent)
     db.refresh(version)
-    return _journal_template_to_response(parent, version)
+    return _journal_template_to_response(db, parent, version)
 
 
 def list_journal_template_versions(
@@ -362,7 +365,7 @@ def list_journal_template_versions(
         .order_by(CompanyJournalTemplateVersion.version_no.desc())
         .all()
     )
-    return [_journal_template_version_to_response(version) for version in versions]
+    return [_journal_template_version_to_response(db, version) for version in versions]
 
 
 def set_journal_template_status(
@@ -375,7 +378,7 @@ def set_journal_template_status(
     db.commit()
     db.refresh(parent)
     latest = _latest_journal_template_version(db, template_id)
-    return _journal_template_to_response(parent, latest)
+    return _journal_template_to_response(db, parent, latest)
 
 
 def _get_journal_template_or_404(
@@ -406,21 +409,29 @@ def _latest_journal_template_version(
 
 
 def _bank_template_to_response(
-    parent: BankTemplate, version: BankTemplateVersion | None
+    db: Session, parent: BankTemplate, version: BankTemplateVersion | None
 ) -> BankTemplateResponse:
+    if version is None:
+        # 数据完整性异常：模板父行存在却无任何版本（正常流程 create 时同步建 v1，
+        # 不会触发）。抛 404 而非让下游对 None.version_no 解引用成 500。
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Bank template {parent.id} has no version (data integrity error)",
+        )
     return BankTemplateResponse(
         id=parent.id,
         company_id=parent.company_id,
+        company_name=_company_name(db, parent.company_id),
         name=parent.name,
         bank_name=parent.bank_name,
         bank_account_id=parent.bank_account_id,
         status=parent.status,
-        latest_version=_bank_template_version_to_response(version),
+        latest_version=_bank_template_version_to_response(db, version),
     )
 
 
 def _bank_template_version_to_response(
-    version: BankTemplateVersion | None,
+    db: Session, version: BankTemplateVersion | None
 ) -> BankTemplateVersionResponse:
     return BankTemplateVersionResponse(
         version_no=version.version_no,
@@ -435,23 +446,33 @@ def _bank_template_version_to_response(
         unique_key_config_json=version.unique_key_config_json,
         sample_file_id=version.sample_file_id,
         created_by=version.created_by,
+        created_by_name=_user_name(db, version.created_by),
+        sample_file_name=_source_file_name(db, version.sample_file_id),
     )
 
 
 def _journal_template_to_response(
-    parent: CompanyJournalTemplate, version: CompanyJournalTemplateVersion | None
+    db: Session, parent: CompanyJournalTemplate, version: CompanyJournalTemplateVersion | None
 ) -> CompanyJournalTemplateResponse:
+    if version is None:
+        # 数据完整性异常：模板父行存在却无任何版本（正常流程 create 时同步建 v1，
+        # 不会触发）。抛 404 而非让下游对 None.version_no 解引用成 500。
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Journal template {parent.id} has no version (data integrity error)",
+        )
     return CompanyJournalTemplateResponse(
         id=parent.id,
         company_id=parent.company_id,
+        company_name=_company_name(db, parent.company_id),
         name=parent.name,
         status=parent.status,
-        latest_version=_journal_template_version_to_response(version),
+        latest_version=_journal_template_version_to_response(db, version),
     )
 
 
 def _journal_template_version_to_response(
-    version: CompanyJournalTemplateVersion | None,
+    db: Session, version: CompanyJournalTemplateVersion | None
 ) -> CompanyJournalTemplateVersionResponse:
     return CompanyJournalTemplateVersionResponse(
         version_no=version.version_no,
@@ -464,4 +485,32 @@ def _journal_template_version_to_response(
         format_rules_json=version.format_rules_json,
         sample_file_id=version.sample_file_id,
         created_by=version.created_by,
+        created_by_name=_user_name(db, version.created_by),
+        sample_file_name=_source_file_name(db, version.sample_file_id),
     )
+
+
+def _company_name(db: Session, company_id: str | None) -> str | None:
+    """按 company_id 查公司名（供前端直接显示，避免裸 ID）。"""
+    if not company_id:
+        return None
+    c = db.get(Company, company_id)
+    return c.name if c else None
+
+
+def _user_name(db: Session, user_id: str | None) -> str | None:
+    """按 user_id 查用户名（优先 name，其次 email，避免裸 ID）。"""
+    if not user_id:
+        return None
+    u = db.get(User, user_id)
+    if u is None:
+        return None
+    return u.name or u.email
+
+
+def _source_file_name(db: Session, file_id: str | None) -> str | None:
+    """按 source_file_id 查原始文件名（避免裸 UUID）。"""
+    if not file_id:
+        return None
+    f = db.get(SourceFile, file_id)
+    return f.original_filename if f else None

@@ -62,6 +62,8 @@ class ConversionRunFile(Base, IdMixin):
         ForeignKey("conversion_runs.id"), nullable=False, index=True
     )
     source_file_id: Mapped[str] = mapped_column(ForeignKey("source_files.id"), nullable=False)
+    # 该文件本次实际使用的工作表名（审计追溯：sheet 是文件级属性，逐文件可不同）。
+    source_sheet_name: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,

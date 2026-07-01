@@ -36,6 +36,29 @@ HEADER_KEYWORDS = {
     "交易流水号",
 }
 
+# 日记账表头关键词（用于日记账模板 detect：识别哪一行是表头）。
+# 与银行流水关键词不重叠——日记账样本的表头通常是"凭证号/日期/科目/借方/贷方"等。
+JOURNAL_HEADER_KEYWORDS = {
+    "凭证号",
+    "凭证字号",
+    "日期",
+    "摘要",
+    "科目",
+    "科目代码",
+    "科目名称",
+    "借方",
+    "贷方",
+    "金额",
+    "余额",
+    "对方",
+    "备注",
+    "制单",
+    "附件",
+}
+
+# 日记账惯例必填列（detect 推断默认必填，仅保留与识别列名的交集）。
+JOURNAL_DEFAULT_REQUIRED = {"日期", "科目", "金额"}
+
 # 表头中文关键词 → 标准字段名（用于自动识别字段别名）。
 HEADER_FIELD_MAP: dict[tuple[str, ...], str] = {
     ("交易日期", "记账日期", "日期"): "transaction_date",
@@ -107,7 +130,17 @@ class ParsedBankRow:
 CellValue = str | date | datetime | int | float | Decimal | None
 
 
-def detect_header_row(rows: list[list[CellValue]], scan_limit: int = 30) -> int:
+def detect_header_row(
+    rows: list[list[CellValue]],
+    scan_limit: int = 30,
+    keywords: set[str] | None = None,
+) -> int:
+    """扫描前 scan_limit 行，按关键词命中数打分，返回最可能是表头行的下标。
+
+    keywords 缺省时用银行流水关键词 HEADER_KEYWORDS（保持向后兼容）；
+    日记账模板 detect 传入 JOURNAL_HEADER_KEYWORDS。
+    """
+    effective_keywords = keywords if keywords is not None else HEADER_KEYWORDS
     best_index = 0
     best_score = -1
 
@@ -117,9 +150,9 @@ def detect_header_row(rows: list[list[CellValue]], scan_limit: int = 30) -> int:
             value = _clean_cell(cell)
             if not value:
                 continue
-            if value in HEADER_KEYWORDS:
+            if value in effective_keywords:
                 score += 2
-            if any(keyword in value for keyword in HEADER_KEYWORDS):
+            if any(keyword in value for keyword in effective_keywords):
                 score += 1
 
         if score > best_score:
@@ -325,12 +358,72 @@ def detect_bank_template_config(
     }
 
 
+def detect_journal_template_config(
+    path: str | Path,
+    file_type: str,
+    sheet_name: str = "",
+) -> dict[str, object]:
+    """从日记账样本文件自动识别模板配置。
+
+    比银行模板 detect 更简单：日记账列名就是输出列名本身（不映射到标准字段），
+    无需字段别名/金额模式/日期格式。只需：
+    1. 识别表头行（用日记账关键词 JOURNAL_HEADER_KEYWORDS 打分）
+    2. 取表头单元格作为 columns（非空单元格即列名）
+    3. 推断默认必填列（与识别列名取交集）
+    返回可直接填入 CompanyJournalTemplateVersionCreate 的 dict。
+    """
+    resolved_sheet = sheet_name or _first_sheet_name(path, file_type)
+    it = _read_rows(path, file_type, resolved_sheet)
+    scan_limit = 30
+    window = list(itertools.islice(it, scan_limit))
+    header_row_index = detect_header_row(window, keywords=JOURNAL_HEADER_KEYWORDS)
+    rows = list(itertools.chain(window, it))
+    header_row = rows[header_row_index] if header_row_index < len(rows) else []
+    data_start_row_index = _detect_data_start_row(rows, header_row_index)
+
+    # 表头单元格原样取为列名（非空单元格）
+    columns = [str(_clean_cell(cell)) for cell in header_row if _clean_cell(cell)]
+    # 默认必填列：与识别出的列名取交集（样本没有的不强加）
+    required_columns = [c for c in columns if c in JOURNAL_DEFAULT_REQUIRED]
+
+    return {
+        "file_type": file_type,
+        "sheet_name": resolved_sheet,
+        "header_row_index": header_row_index,
+        "data_start_row_index": data_start_row_index,
+        "columns": columns,
+        "required_columns": required_columns,
+    }
+
+
 def _first_sheet_name(path: str | Path, file_type: str) -> str:
     if file_type.lower() != "xlsx":
         return "Sheet1"
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         return workbook.sheetnames[0] if workbook.sheetnames else "Sheet1"
+    finally:
+        workbook.close()
+
+
+def list_xlsx_sheets(path: str | Path) -> list[str]:
+    """返回 xlsx 文件的全部工作表名（按文件内顺序）。
+
+    供「上传后让用户选择工作表」能力使用。非 xlsx / 文件不存在 / 解析失败
+    均返回空列表（不抛错），调用方据此对 CSV 隐藏工作表选择器。
+
+    read_only 模式只读元数据，不物化单元格，开销很低。
+    """
+    file_path = Path(path)
+    if not file_path.exists():
+        return []
+    try:
+        workbook = load_workbook(file_path, read_only=True, data_only=True)
+    except Exception:
+        # openpyxl 对非 xlsx（如 CSV）会抛 InvalidFileException 等；统一降级为空
+        return []
+    try:
+        return list(workbook.sheetnames)
     finally:
         workbook.close()
 

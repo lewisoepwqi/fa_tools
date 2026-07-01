@@ -7,8 +7,13 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../auth/useAuth';
 import { uploadBankStatement } from '../../../api/files';
 import { message } from '../../../components/antdApp';
-import { listBankTemplates } from '../api/bankTemplates';
-import { createConversionRunFromConfig, dryRunConversion, type DryRunResponse } from '../api/conversionRuns';
+import { listBankTemplates, listSourceFileSheets } from '../api/bankTemplates';
+import {
+  createConversionRunFromConfig,
+  dryRunConversion,
+  type DryRunResponse,
+  type SourceFileRef
+} from '../api/conversionRuns';
 import { listJournalTemplates } from '../api/journalTemplates';
 import { listMappingProfiles } from '../api/mappingProfiles';
 import { listRules } from '../api/rules';
@@ -33,8 +38,14 @@ export function UploadPage() {
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // 已上传的源文件 ID（beforeUpload 里逐个上传，转换时用这些 ID）
-  const [sourceFileIds, setSourceFileIds] = useState<string[]>([]);
+  // 已上传的源文件（携带 id/名称/类型，用于「已上传文件」列表与 sheet 选择）
+  const [uploadedFiles, setUploadedFiles] = useState<
+    { id: string; name: string; fileType: string }[]
+  >([]);
+  // 每个文件的可用工作表（xlsx 才有；CSV/XLS 为空数组）。按 file_id 缓存。
+  const [fileSheets, setFileSheets] = useState<Record<string, string[]>>({});
+  // 每个文件用户选中的工作表名。xlsx 多 sheet 时逐文件选；CSV 无此项。
+  const [selectedSheets, setSelectedSheets] = useState<Record<string, string>>({});
 
   // 配置选择
   const [bankTemplates, setBankTemplates] = useState<BankTemplate[]>([]);
@@ -94,12 +105,41 @@ export function UploadPage() {
     }
     try {
       const uploaded = await uploadBankStatement(file, currentCompanyId);
-      setSourceFileIds((prev) => [...prev, uploaded.id]);
+      const fileType = (file.name.split('.').pop() || '').toLowerCase();
+      setUploadedFiles((prev) => [
+        ...prev,
+        { id: uploaded.id, name: file.name, fileType }
+      ]);
+      // xlsx 才拉取工作表列表（CSV 无 sheet 概念），默认选中首个工作表。
+      if (fileType === 'xlsx') {
+        try {
+          const res = await listSourceFileSheets(uploaded.id);
+          setFileSheets((prev) => ({ ...prev, [uploaded.id]: res.sheets }));
+          if (res.sheets.length > 0) {
+            setSelectedSheets((prev) => ({ ...prev, [uploaded.id]: res.sheets[0] }));
+          }
+        } catch {
+          // 拉取 sheet 失败不阻断上传，用户仍可正常转换（后端按首个 sheet 兜底）
+        }
+      }
     } catch (err) {
       message.error(err instanceof Error ? err.message : '上传失败');
     }
     return false; // 阻止 antd 自动上传
   };
+
+  /** 把每文件所选工作表打包成转换请求的 source_files（仅含已选 sheet 的 xlsx 文件）。 */
+  const buildSourceFiles = (): SourceFileRef[] =>
+    uploadedFiles
+      .map((f) => {
+        const sheet = selectedSheets[f.id];
+        // 仅当文件有可选 sheet 且用户已选时才传；CSV / 未选 sheet 让后端兜底
+        if (!sheet) return null;
+        return { file_id: f.id, sheet_name: sheet };
+      })
+      .filter((x): x is SourceFileRef => x !== null);
+
+  const sourceFileIds = uploadedFiles.map((f) => f.id);
 
   const handleStart = async () => {
     if (sourceFileIds.length === 0) {
@@ -122,7 +162,8 @@ export function UploadPage() {
         bank_template_id: bankTemplateId,
         company_journal_template_id: journalTemplateId,
         mapping_profile_id: mappingProfileId,
-        rule_ids: ruleIds
+        rule_ids: ruleIds,
+        source_files: buildSourceFiles()
       });
       setRun(result);
       message.success('转换完成');
@@ -152,6 +193,7 @@ export function UploadPage() {
         company_journal_template_id: journalTemplateId,
         mapping_profile_id: mappingProfileId,
         rule_ids: ruleIds,
+        source_files: buildSourceFiles(),
         limit: 10
       });
       setDryRunResult(result);
@@ -201,6 +243,77 @@ export function UploadPage() {
           <p className="ant-upload-text">点击或拖拽文件到此处上传</p>
           <p className="ant-upload-hint">支持 .csv / .xlsx，可多选</p>
         </Upload.Dragger>
+
+        {/* 已上传文件列表：xlsx 文件可逐个选择本次转换用的工作表 */}
+        {uploadedFiles.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <Typography.Title level={5}>已上传文件</Typography.Title>
+            <Space direction="vertical" size={8} style={{ width: '100%' }}>
+              {uploadedFiles.map((f) => {
+                const sheets = fileSheets[f.id] || [];
+                const isXlsx = f.fileType === 'xlsx';
+                return (
+                  <div
+                    key={f.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 12,
+                      padding: '8px 12px',
+                      background: 'var(--ant-color-fill-quaternary, #fafafa)',
+                      borderRadius: 6
+                    }}
+                  >
+                    <Tag color="blue">{f.fileType.toUpperCase()}</Tag>
+                    <Typography.Text style={{ flex: 1, minWidth: 0 }} ellipsis>
+                      {f.name}
+                    </Typography.Text>
+                    {isXlsx && sheets.length > 0 ? (
+                      <Select
+                        size="small"
+                        style={{ width: 200 }}
+                        value={selectedSheets[f.id]}
+                        onChange={(v) =>
+                          setSelectedSheets((prev) => ({ ...prev, [f.id]: v }))
+                        }
+                        options={sheets.map((s) => ({ value: s, label: s }))}
+                        placeholder="选择工作表"
+                      />
+                    ) : isXlsx ? (
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        工作表加载中…
+                      </Typography.Text>
+                    ) : (
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        CSV 无需选择工作表
+                      </Typography.Text>
+                    )}
+                    <Button
+                      size="small"
+                      type="text"
+                      danger
+                      onClick={() => {
+                        setUploadedFiles((prev) => prev.filter((x) => x.id !== f.id));
+                        setFileSheets((prev) => {
+                          const next = { ...prev };
+                          delete next[f.id];
+                          return next;
+                        });
+                        setSelectedSheets((prev) => {
+                          const next = { ...prev };
+                          delete next[f.id];
+                          return next;
+                        });
+                      }}
+                    >
+                      移除
+                    </Button>
+                  </div>
+                );
+              })}
+            </Space>
+          </div>
+        )}
 
         {/* 配置选择区：上传后引导用户挑选本次使用的版本化配置 */}
         <div style={{ marginTop: 24 }}>

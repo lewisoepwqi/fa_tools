@@ -24,6 +24,7 @@ from app.tools.bank_journal.schemas.template import (
     BankTemplateResponse,
     BankTemplateVersionCreate,
     BankTemplateVersionResponse,
+    SourceFileSheetsResponse,
 )
 from app.tools.bank_journal.services import template_service
 from app.tools.bank_journal.services.custom_field_service import (
@@ -33,6 +34,7 @@ from app.tools.bank_journal.services.custom_field_service import (
 from app.tools.bank_journal.services.parser_service import (
     CustomFieldDef,
     detect_bank_template_config,
+    list_xlsx_sheets,
 )
 
 router = APIRouter(
@@ -104,6 +106,32 @@ def detect_bank_template(
         builtin_kw_overrides,
     )
     return BankTemplateDetectResponse(**detected)
+
+
+@router.get(
+    "/source-files/{file_id}/sheets",
+    response_model=SourceFileSheetsResponse,
+    dependencies=[Depends(require(Permission.READ))],
+)
+def list_source_file_sheets(
+    db: DbSession, user: CurrentUserDep, file_id: str
+) -> SourceFileSheetsResponse:
+    """列出已上传文件的工作表名（供「上传后选 sheet」能力使用）。
+
+    每个文件的 sheet 名不同（"明细"/"交易流水"/"Sheet1"），转换前需让用户
+    看到该文件有哪些 sheet 可选。CSV / XLS 等无工作表概念的文件返回空列表，
+    前端据此隐藏选择器。
+    """
+    source = db.query(SourceFile).filter(SourceFile.id == file_id).first()
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Source file not found: {file_id}",
+        )
+    require_company_access(user, source.company_id)
+    file_path = Path(get_settings().upload_dir) / source.storage_key
+    sheets = list_xlsx_sheets(file_path) if file_path.exists() else []
+    return SourceFileSheetsResponse(file_id=file_id, sheets=sheets)
 
 
 @router.get(

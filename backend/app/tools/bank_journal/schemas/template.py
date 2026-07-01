@@ -19,6 +19,9 @@ class BankTemplateVersionCreate(BaseModel):
 
 class BankTemplateVersionResponse(BankTemplateVersionCreate):
     version_no: int
+    # 展示名（联表解析，供前端直接显示，避免裸 ID）
+    created_by_name: str | None = None
+    sample_file_name: str | None = None
 
 
 class BankTemplateCreate(BaseModel):
@@ -32,6 +35,7 @@ class BankTemplateCreate(BaseModel):
 class BankTemplateResponse(BaseModel):
     id: str
     company_id: str | None = None
+    company_name: str | None = None
     name: str
     bank_name: str | None = None
     bank_account_id: str | None = None
@@ -57,6 +61,16 @@ class BankTemplateDetectResponse(BaseModel):
     date_formats: list[str]
 
 
+class SourceFileSheetsResponse(BaseModel):
+    """已上传文件的工作表列表（供「上传后选 sheet」能力使用）。
+
+    CSV / XLS 等无工作表概念的文件返回空列表，前端据此隐藏选择器。
+    """
+
+    file_id: str
+    sheets: list[str]
+
+
 class CompanyJournalTemplateVersionCreate(BaseModel):
     file_type: str
     sheet_name: str | None = None
@@ -71,6 +85,9 @@ class CompanyJournalTemplateVersionCreate(BaseModel):
 
 class CompanyJournalTemplateVersionResponse(CompanyJournalTemplateVersionCreate):
     version_no: int
+    # 展示名（联表解析，供前端直接显示，避免裸 ID）
+    created_by_name: str | None = None
+    sample_file_name: str | None = None
 
 
 class CompanyJournalTemplateCreate(BaseModel):
@@ -82,6 +99,23 @@ class CompanyJournalTemplateCreate(BaseModel):
 class CompanyJournalTemplateResponse(BaseModel):
     id: str
     company_id: str
+    company_name: str | None = None
     name: str
     status: str
     latest_version: CompanyJournalTemplateVersionResponse
+
+
+class JournalTemplateDetectRequest(BaseModel):
+    source_file_id: str
+    sheet_name: str | None = None
+
+
+class JournalTemplateDetectResponse(BaseModel):
+    """从日记账样本识别出的模板配置（表头行 + 列名）。"""
+
+    file_type: str
+    sheet_name: str
+    header_row_index: int
+    data_start_row_index: int
+    columns: list[str]
+    required_columns: list[str]

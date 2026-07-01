@@ -32,6 +32,7 @@ import {
   ruleDataToBackend,
   type RuleEditorData
 } from '../components/RuleEditor';
+import { RuleConfigView } from '../components/RuleConfigView';
 import { useStandardFields } from '../components/useStandardFields';
 import { StatusTag } from '../components/StatusTag';
 import { VersionBadge } from '../components/VersionBadge';
@@ -166,11 +167,6 @@ export function RuleDetailPage() {
           </Button>
           <h2 className="section-title">{data.name}</h2>
           <div className="toolbar-spacer" />
-          <Tooltip title={!canManage ? '权限不足' : undefined}>
-            <Button icon={<EditOutlined />} onClick={openEdit} disabled={!canManage}>
-              编辑（新版本）
-            </Button>
-          </Tooltip>
           <Button onClick={() => setHistoryOpen(true)}>版本历史</Button>
           <Tooltip title={!canManage ? '权限不足' : undefined}>
             <Button onClick={handleToggleStatus} disabled={!canManage}>
@@ -179,63 +175,80 @@ export function RuleDetailPage() {
           </Tooltip>
         </div>
         <Descriptions size="small" column={2} bordered>
-          <Descriptions.Item label="规则ID">{data.id}</Descriptions.Item>
-          <Descriptions.Item label="公司">{data.company_id}</Descriptions.Item>
-          <Descriptions.Item label="作用域类型">{data.scope_type ?? '全局'}</Descriptions.Item>
-          <Descriptions.Item label="作用域ID">{data.scope_id ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label="公司">{data.company_name ?? data.company_id}</Descriptions.Item>
+          <Descriptions.Item label="作用域">
+            {data.scope_name ?? (data.scope_type ? `${data.scope_type}（${data.scope_id ?? '-'}）` : '全局')}
+          </Descriptions.Item>
           <Descriptions.Item label="状态">
             <StatusTag status={data.status} />
           </Descriptions.Item>
           <Descriptions.Item label="最新版本">
             <VersionBadge version={v.version_no} />
           </Descriptions.Item>
+          <Descriptions.Item label="版本创建者">{v.created_by_name ?? v.created_by ?? '-'}</Descriptions.Item>
         </Descriptions>
       </Card>
 
-      <Card className="work-card" title={`配置详情 · v${v.version_no}`}>
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
-          <Descriptions size="small" column={2} bordered>
-            <Descriptions.Item label="优先级">{v.priority ?? '-'}</Descriptions.Item>
-            <Descriptions.Item label="允许自动确认">
-              <Tag color={v.allow_auto_confirm ? 'green' : 'default'}>
-                {v.allow_auto_confirm ? '是' : '否'}
-              </Tag>
-            </Descriptions.Item>
-          </Descriptions>
-          <Alert type="info" showIcon message="规则含义" description={describeRule(currentRuleData)} />
-        </Space>
-      </Card>
-
-      <Modal
-        open={editOpen}
-        title="编辑规则（创建新版本）"
-        okText="创建新版本"
-        cancelText="取消"
-        confirmLoading={editing}
-        onOk={handleEdit}
-        onCancel={() => setEditOpen(false)}
-        destroyOnHidden
-        width={680}
+      <Card
+        className="work-card"
+        title={`配置详情 · v${v.version_no}`}
+        extra={
+          editOpen ? (
+            <Space>
+              <Button type="primary" loading={editing} onClick={handleEdit}>
+                保存（创建新版本）
+              </Button>
+              <Button onClick={() => setEditOpen(false)}>取消</Button>
+            </Space>
+          ) : (
+            <Tooltip title={!canManage ? '权限不足' : undefined}>
+              <Button icon={<EditOutlined />} onClick={openEdit} disabled={!canManage}>
+                编辑
+              </Button>
+            </Tooltip>
+          )
+        }
       >
-        <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div>
-              <Typography.Text strong>优先级</Typography.Text>
-              <InputNumber min={0} value={editPriority} onChange={(v2) => setEditPriority(v2 ?? 0)} style={{ width: 120, marginLeft: 8 }} />
+        {editOpen ? (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Alert type="warning" showIcon message="修改将创建新版本，旧版本保留用于历史追溯。" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div>
+                <Typography.Text strong>优先级</Typography.Text>
+                <InputNumber
+                  min={0}
+                  value={editPriority}
+                  onChange={(v2) => setEditPriority(v2 ?? 0)}
+                  style={{ width: 120, marginLeft: 8 }}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Switch checked={editAuto} onChange={setEditAuto} />
+                <Typography.Text>允许自动确认</Typography.Text>
+              </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Switch checked={editAuto} onChange={setEditAuto} />
-              <Typography.Text>允许自动确认</Typography.Text>
-            </div>
-          </div>
-          <RuleEditor
-            value={editData}
-            onChange={setEditData}
-            standardFieldOptions={standardFields.options}
-            fieldTypeMap={standardFields.typeMap}
-          />
-        </div>
-      </Modal>
+            <RuleEditor
+              value={editData}
+              onChange={setEditData}
+              standardFieldOptions={standardFields.options}
+              fieldTypeMap={standardFields.typeMap}
+            />
+          </Space>
+        ) : (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Descriptions size="small" column={2} bordered>
+              <Descriptions.Item label="优先级">{v.priority ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label="允许自动确认">
+                <Tag color={v.allow_auto_confirm ? 'green' : 'default'}>
+                  {v.allow_auto_confirm ? '是' : '否'}
+                </Tag>
+              </Descriptions.Item>
+            </Descriptions>
+            <Alert type="info" showIcon message="规则含义" description={describeRule(currentRuleData)} />
+            <RuleConfigView data={currentRuleData} />
+          </Space>
+        )}
+      </Card>
 
       <Modal
         open={historyOpen}
@@ -250,6 +263,15 @@ export function RuleDetailPage() {
           dataSource={versions}
           pagination={false}
           size="small"
+          expandable={{
+            expandedRowRender: (r) => (
+              <RuleConfigView data={ruleDataFromBackend(r.conditions_json, r.actions_json)} />
+            ),
+            rowExpandable: (r) => {
+              const d = ruleDataFromBackend(r.conditions_json, r.actions_json);
+              return d.conditions.length > 0 || d.actions.length > 0;
+            }
+          }}
         />
       </Modal>
     </Space>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -38,6 +39,7 @@ from app.tools.bank_journal.schemas.conversion import (
     DryRunCreate,
     DryRunResponse,
     JournalPreviewRowData,
+    SourceFileRef,
 )
 from app.tools.bank_journal.schemas.pagination import Page
 from app.tools.bank_journal.schemas.standard import StandardBankTransaction
@@ -46,6 +48,7 @@ from app.tools.bank_journal.services.mapping_service import apply_mappings
 from app.tools.bank_journal.services.parser_service import (
     BankTemplateParseConfig,
     CustomFieldDef,
+    list_xlsx_sheets,
     parse_bank_rows,
 )
 from app.tools.bank_journal.services.rule_service import apply_rules
@@ -59,6 +62,33 @@ _MUST_CONFIRM_CODES: frozenset[ExceptionCode] = frozenset({
     ExceptionCode.DUPLICATE_HISTORY,
     ExceptionCode.BALANCE_DISCONTINUITY,
 })
+
+
+def _resolve_sheet_for_file(
+    source_files: list[SourceFileRef] | None,
+    source_file_id: str,
+    file_path: Path,
+    template_default: str,
+) -> str:
+    """决定单个文件本次解析用的工作表名。
+
+    优先级（高 → 低）：
+    1. 用户为该文件显式选择的 sheet（source_files[].sheet_name）
+    2. 模板默认 sheet（template_default，来自 bank_parse_config / sheet_selector_json）
+    3. 文件首个工作表（xlsx，文件叫什么用什么，不因名字不匹配报错）
+    4. 空串（CSV / xls：parser 内部忽略 sheet 名）
+
+    空白的 sheet_name 视同未指定，继续回退——避免前端传了空值反而覆盖掉模板默认。
+    """
+    if source_files:
+        for ref in source_files:
+            if ref.file_id == source_file_id and ref.sheet_name:
+                return ref.sheet_name
+    if template_default:
+        return template_default
+    # 模板也没配：取文件首个工作表（xlsx）。CSV 返回空串，parser 忽略。
+    sheets = list_xlsx_sheets(file_path)
+    return sheets[0] if sheets else ""
 
 
 def build_preview_row(
@@ -197,11 +227,15 @@ def _parse_and_build_rows(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Source file missing on disk: {source_file_id}",
             )
+        # 按文件解析工作表名：用户选择 > 模板默认 > 文件首个 sheet（xlsx）。
+        resolved_sheet = _resolve_sheet_for_file(
+            payload.source_files, source_file_id, file_path, config.sheet_name
+        )
         parse_config = BankTemplateParseConfig(
             bank_account_id=payload.bank_account_id,
             source_file_id=source_file_id,
             file_type=source.file_type,
-            sheet_name=config.sheet_name,
+            sheet_name=resolved_sheet,
             header_row_index=config.header_row_index,
             data_start_row_index=config.data_start_row_index,
             field_aliases=config.field_aliases,
@@ -217,6 +251,7 @@ def _parse_and_build_rows(
                 id=str(uuid4()),
                 conversion_run_id=run.id,
                 source_file_id=source_file_id,
+                source_sheet_name=resolved_sheet,
                 status="parsed",
                 row_count=len(parsed_rows),
             )
@@ -241,7 +276,7 @@ def _parse_and_build_rows(
                             "_parse_error": parsed.error_message,
                             "_source_row_index": parsed.source_row_index,
                             "_source_sheet_name": parsed.source_sheet_name,
-                            "_raw_row": parsed.raw_row,
+                            "_raw_row": _json_safe_raw_row(parsed.raw_row),
                         },
                         status=PreviewStatus.PARSE_FAILED,
                         exception_codes_json=[code.value for code in exception_codes],
@@ -517,6 +552,8 @@ def run_conversion_from_config(
         bank_template_version_id=bank_version.id,
         company_journal_template_version_id=journal_version.id,
         mapping_profile_version_id=mapping_version.id if mapping_version else None,
+        # 透传每文件工作表覆盖（sheet 是文件级属性，由用户上传后选择）。
+        source_files=payload.source_files,
     )
     return run_conversion(db, inline_payload, upload_dir)
 
@@ -548,7 +585,8 @@ def dry_run_conversion(
     amount_config = dict(bank_version.amount_config_json or {})
     date_formats = list(bank_version.date_formats_json or ["%Y-%m-%d"])
     selector = bank_version.sheet_selector_json or {}
-    sheet_name = str(selector.get("sheet_name") or "Sheet1")
+    # 模板默认 sheet（可能为空——sheet 是文件级属性，不再硬兜底 Sheet1）。
+    template_default_sheet = str(selector.get("sheet_name") or "")
     header_row_index = (
         bank_version.header_row_index if bank_version.header_row_index is not None else 0
     )
@@ -578,11 +616,15 @@ def dry_run_conversion(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Source file missing on disk: {source_file_id}",
             )
+        # 按文件解析工作表名：用户选择 > 模板默认 > 文件首个 sheet（xlsx）。
+        resolved_sheet = _resolve_sheet_for_file(
+            payload.source_files, source_file_id, file_path, template_default_sheet
+        )
         parse_config = BankTemplateParseConfig(
             bank_account_id=payload.bank_account_id,
             source_file_id=source_file_id,
             file_type=source.file_type,
-            sheet_name=sheet_name,
+            sheet_name=resolved_sheet,
             header_row_index=header_row_index,
             data_start_row_index=data_start_row_index,
             field_aliases=field_aliases,
@@ -741,12 +783,14 @@ def _ensure_parent_active(db: Session, model: type, parent_id: str, label: str) 
 def _bank_version_to_parse_config(v: BankTemplateVersion) -> BankParseConfig:
     """模板版本字段（带 _json 后缀）→ parse 期望的 BankParseConfig（无后缀）。
 
-    注意 sheet_name 取自 sheet_selector_json.sheet_name（兼容缺失时回落 "Sheet1"）。
+    sheet_name 取自 sheet_selector_json.sheet_name，缺失时返回空串（不再硬兜底
+    "Sheet1"）。空串语义="模板未指定"，由调用方按文件实际 sheet 解析（见
+    _resolve_sheet_for_file：用户选择 > 模板默认 > 文件首个工作表）。
     """
     selector = v.sheet_selector_json or {}
     return BankParseConfig(
         file_type=v.file_type,
-        sheet_name=str(selector.get("sheet_name") or "Sheet1"),
+        sheet_name=str(selector.get("sheet_name") or ""),
         header_row_index=v.header_row_index if v.header_row_index is not None else 0,
         data_start_row_index=(
             v.data_start_row_index if v.data_start_row_index is not None else 1
@@ -807,6 +851,26 @@ def _slot_map_for(defs: list[CustomFieldDef]) -> dict[str, CustomFieldDef]:
     return {d.field_key: d for d in defs}
 
 
+def _json_safe_raw_row(raw_row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """把 raw_row 里的非 JSON 原生类型转为可序列化形态。
+
+    xlsx 的日期单元格经 openpyxl 读出为 datetime/date 对象，直接落 raw_row_json
+    会触发 "Object of type datetime is not JSON serializable"。这里统一转 ISO 字符串，
+    语义无损（审计快照用途），Decimal 转 str 保留精度。
+    """
+    if not raw_row:
+        return raw_row
+    safe: dict[str, Any] = {}
+    for key, value in raw_row.items():
+        if isinstance(value, (datetime, date)):
+            safe[key] = value.isoformat()
+        elif isinstance(value, Decimal):
+            safe[key] = str(value)
+        else:
+            safe[key] = value
+    return safe
+
+
 def _build_bank_transaction(
     run_id: str, txn: StandardBankTransaction, slot_map: dict[str, CustomFieldDef] | None = None
 ) -> BankTransaction:
@@ -833,7 +897,7 @@ def _build_bank_transaction(
         transaction_type=txn.transaction_type,
         bank_transaction_id=txn.bank_transaction_id,
         receipt_no=txn.receipt_no,
-        raw_row_json=txn.raw_row,
+        raw_row_json=_json_safe_raw_row(txn.raw_row),
     )
     # 把 extra_fields 按 field_key → slot_key 反查,按类型转换后写入对应预分配列。
     if slot_map and txn.extra_fields:

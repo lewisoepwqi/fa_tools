@@ -57,3 +57,32 @@ export async function setJournalTemplateStatus(
 export async function deleteJournalTemplate(id: string): Promise<void> {
   await apiClient.delete(`/api/tools/bank-journal/journal-templates/${id}`);
 }
+
+/** 日记账模板 detect 识别结果（表头行 + 列名）。 */
+export interface JournalDetectResult {
+  file_type: string;
+  sheet_name: string;
+  header_row_index: number;
+  data_start_row_index: number;
+  columns: string[];
+  required_columns: string[];
+}
+
+/**
+ * 从已上传的日记账样本识别表头行与列名（对齐银行模板 detect 体验）。
+ *
+ * 列名即输出列名本身，无需字段别名映射。识别后用户可核对调整。
+ */
+export async function detectJournalTemplate(
+  sourceFileId: string,
+  sheetName?: string
+): Promise<JournalDetectResult> {
+  const response = await apiClient.post<JournalDetectResult>(
+    '/api/tools/bank-journal/journal-templates/detect',
+    {
+      source_file_id: sourceFileId,
+      ...(sheetName ? { sheet_name: sheetName } : {})
+    }
+  );
+  return response.data;
+}

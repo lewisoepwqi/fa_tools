@@ -1,5 +1,5 @@
 import { CheckCircleFilled, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import { Alert, Button, Descriptions, Input, Select, Space, Tag, Typography } from 'antd';
+import { Alert, Button, Descriptions, Input, Select, Space, Table, Tag, Typography } from 'antd';
 import {
   AMOUNT_MODE_LABEL,
   FIELD_LABEL,
@@ -18,6 +18,12 @@ export interface BankTemplateConfigView {
   amount_mode: string;
   amount_config?: Record<string, unknown> | null;
   date_formats?: unknown[] | null;
+  /** 去重唯一键配置：{ fields: ["transaction_date", "amount", ...] }。 */
+  unique_key_config?: Record<string, unknown> | null;
+  /** 识别所用的样本文件 ID（追溯用）。 */
+  sample_file_id?: string | null;
+  /** 样本文件名（后端联表解析，优先显示）。 */
+  sample_file_name?: string | null;
 }
 
 interface DetectResultViewProps {
@@ -48,6 +54,16 @@ const KEY_FIELD_KEYS = new Set([
   'counterparty_name'
 ]);
 
+/** amount_config 的角色 key → 中文（金额模式参数展示用）。 */
+const AMOUNT_CONFIG_ROLE_LABEL: Record<string, string> = {
+  income: '收入列',
+  expense: '支出列',
+  debit: '借方列',
+  credit: '贷方列',
+  amount: '金额列',
+  direction: '方向列'
+};
+
 function describeConfig(config: BankTemplateConfigView): string {
   const aliases = config.field_aliases ?? {};
   const aliasKeys = Object.values(aliases).map((f) => String(f));
@@ -76,6 +92,10 @@ export function DetectResultView({
   const aliases = config.field_aliases ?? {};
   const aliasEntries = Object.entries(aliases);
   const dateFormats = (config.date_formats ?? []) as string[];
+  const amountConfigEntries = Object.entries(config.amount_config ?? {});
+  const uniqueKeyFields = ((config.unique_key_config?.fields as string[] | undefined) ?? []).map(
+    (f) => FIELD_LABEL[f] ?? f
+  );
   const summary = describeConfig(config);
   const editable = !!onFieldAliasesChange;
   const fieldOptions = standardFieldOptions ?? STANDARD_FIELD_OPTIONS;
@@ -95,7 +115,21 @@ export function DetectResultView({
           {rowIndexOf(config.data_start_row_index)}
         </Descriptions.Item>
         <Descriptions.Item label="金额格式">
-          <Tag color="blue">{AMOUNT_MODE_LABEL[config.amount_mode] ?? config.amount_mode}</Tag>
+          <Space direction="vertical" size={4} style={{ lineHeight: 1.4 }}>
+            <Tag color="blue">{AMOUNT_MODE_LABEL[config.amount_mode] ?? config.amount_mode}</Tag>
+            {amountConfigEntries.length > 0 && (
+              <Space wrap size={[4, 4]}>
+                {amountConfigEntries.map(([role, field]) => (
+                  <Typography.Text key={role} type="secondary" style={{ fontSize: 12 }}>
+                    {AMOUNT_CONFIG_ROLE_LABEL[role] ?? role}：
+                    <Typography.Text code style={{ marginLeft: 2 }}>
+                      {FIELD_LABEL[String(field)] ?? String(field)}
+                    </Typography.Text>
+                  </Typography.Text>
+                ))}
+              </Space>
+            )}
+          </Space>
         </Descriptions.Item>
         <Descriptions.Item label="日期格式">
           {dateFormats.length > 0 ? (
@@ -104,26 +138,60 @@ export function DetectResultView({
             <Typography.Text type="secondary">未识别（将按默认格式尝试）</Typography.Text>
           )}
         </Descriptions.Item>
-        <Descriptions.Item label={`字段映射（${aliasEntries.length} 个）`}>
-          {editable ? (
-            <FieldAliasesEditor
-              entries={aliasEntries.map(([col, field]) => [col, String(field ?? '')])}
-              fieldOptions={fieldOptions}
-              onChange={(next) => onFieldAliasesChange?.(next)}
-            />
-          ) : aliasEntries.length > 0 ? (
-            <Space wrap size={[8, 8]}>
-              {aliasEntries.map(([col, field]) => (
-                <Tag key={col} icon={<CheckCircleFilled className="ok-mark" />}>
-                  {col} → {FIELD_LABEL[String(field)] ?? String(field)}
-                </Tag>
+        <Descriptions.Item label="去重唯一键">
+          {uniqueKeyFields.length > 0 ? (
+            <Space wrap size={[4, 4]}>
+              {uniqueKeyFields.map((f) => (
+                <Tag key={f} color="purple">{f}</Tag>
               ))}
             </Space>
+          ) : (
+            <Typography.Text type="secondary">默认（日期+金额+对方户名）</Typography.Text>
+          )}
+        </Descriptions.Item>
+        <Descriptions.Item label="样本文件">
+          {config.sample_file_id ? (
+            <Typography.Text>{config.sample_file_name ?? config.sample_file_id}</Typography.Text>
           ) : (
             <Typography.Text type="secondary">无</Typography.Text>
           )}
         </Descriptions.Item>
       </Descriptions>
+
+      {/* 字段映射：从 Descriptions 抽出，用表格逐行展示（流水表头列 → 标准字段）。 */}
+      <Typography.Text strong>字段映射（{aliasEntries.length} 个）</Typography.Text>
+      {editable ? (
+        <FieldAliasesEditor
+          entries={aliasEntries.map(([col, field]) => [col, String(field ?? '')])}
+          fieldOptions={fieldOptions}
+          onChange={(next) => onFieldAliasesChange?.(next)}
+        />
+      ) : aliasEntries.length > 0 ? (
+        <Table
+          rowKey={(row: { col: string }) => row.col}
+          dataSource={aliasEntries.map(([col, field]) => ({ col, field: String(field ?? '') }))}
+          pagination={false}
+          size="small"
+          columns={[
+            { title: '流水表头列', dataIndex: 'col', key: 'col', width: '45%' },
+            {
+              title: '标准字段',
+              dataIndex: 'field',
+              key: 'field',
+              render: (field: string) => (
+                <Space size={4}>
+                  <Typography.Text type="secondary">→</Typography.Text>
+                  <Tag color="blue" icon={<CheckCircleFilled className="ok-mark" />}>
+                    {FIELD_LABEL[field] ?? field}
+                  </Tag>
+                </Space>
+              )
+            }
+          ]}
+        />
+      ) : (
+        <Typography.Text type="secondary">无</Typography.Text>
+      )}
     </Space>
   );
 }
